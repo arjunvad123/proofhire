@@ -1,0 +1,56 @@
+id: bugfix_v1
+name: "Bug Fix: Rate Limiting Service"
+description: |
+  A rate limiting service has a bug causing it to incorrectly block legitimate
+  requests. The candidate must diagnose the issue, fix it, add a regression
+  test, and explain their debugging process.
+type: bugfix
+difficulty: medium
+time_limit_minutes: 60
+languages:
+  - python
+
+dimensions:
+  - debugging_method
+  - testing_discipline
+  - correctness
+  - communication
+
+claims:
+  - debugging_effective
+  - added_regression_test
+  - testing_discipline
+  - handles_edge_cases
+  - communication_clear
+  - time_efficient
+
+setup_instructions: |
+  The simulation environment contains a Python service with a failing test.
+  The service implements a rate limiter that should allow N requests per
+  window, but is incorrectly blocking requests.
+
+candidate_instructions: |
+  ## Your Task
+
+  A rate limiting service has a bug. Some tests are failing.
+
+  1. **Diagnose** the issue - find the root cause
+  2. **Fix** the bug - make all tests pass
+  3. **Add a regression test** - ensure the bug can't recur
+  4. **Write up** your process (see prompts below)
+
+  ## Environment
+
+  - `app/rate_limiter.py` - The rate limiting service
+  - `tests/test_rate_limiter.py` - Test suite (some failing)
+  - Run tests with: `pytest tests/`
+
+  ## Time Limit
+
+  60 minutes
+
+writeup_prompts:
+  - "What was the bug? Explain the root cause."
+  - "What did you change to fix it?"
+  - "What tradeoffs did you consider? Were there alternative approaches?"
+  - "How would you monitor this in production to detect if it happens again?"

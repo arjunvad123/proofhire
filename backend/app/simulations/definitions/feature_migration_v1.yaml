@@ -1,0 +1,61 @@
+id: feature_migration_v1
+name: "Feature: Database Migration"
+description: |
+  Add a new feature to an existing service that requires a database migration.
+  The candidate must add the feature, write tests, handle backwards
+  compatibility, and document their approach.
+type: feature
+difficulty: medium
+time_limit_minutes: 90
+languages:
+  - python
+
+dimensions:
+  - testing_discipline
+  - correctness
+  - shipping_speed
+  - communication
+
+claims:
+  - added_regression_test
+  - testing_discipline
+  - handles_edge_cases
+  - communication_clear
+  - time_efficient
+
+setup_instructions: |
+  The simulation environment contains a user service with an existing
+  database schema. The task is to add a "user preferences" feature.
+
+candidate_instructions: |
+  ## Your Task
+
+  Add user preferences to an existing user service.
+
+  1. **Add the feature** - Users should be able to save and retrieve preferences
+  2. **Write a migration** - Add the necessary database changes
+  3. **Add tests** - Ensure the feature works correctly
+  4. **Write up** your approach (see prompts below)
+
+  ## Requirements
+
+  - Preferences are key-value pairs (string keys, JSON values)
+  - Must handle the case where user has no preferences yet
+  - Must be backwards compatible with existing code
+
+  ## Environment
+
+  - `app/user_service.py` - The user service
+  - `app/models.py` - Database models
+  - `migrations/` - Alembic migrations
+  - `tests/` - Test suite
+
+  ## Time Limit
+
+  90 minutes
+
+writeup_prompts:
+  - "Describe your approach to the database migration."
+  - "How did you ensure backwards compatibility?"
+  - "What edge cases did you consider?"
+  - "How would you roll this out safely to production?"
