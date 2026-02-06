@@ -12,11 +12,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy runner code
-COPY . .
+# Copy runner code into a package directory
+COPY . ./runner/
 
-# Create non-root user for security
-RUN useradd -m -s /bin/bash runner
-USER runner
+# Note: Running as root to access Docker socket
+# In production, use a proper Docker group setup
 
 CMD ["python", "-m", "runner"]

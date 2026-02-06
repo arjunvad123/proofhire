@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import auth, orgs, roles, candidates, applications, simulations, runs, briefs, artifacts
+from app.api.routes import auth, orgs, roles, candidates, applications, simulations, runs, briefs, artifacts, internal
 
 api_router = APIRouter()
 
@@ -16,3 +16,4 @@ api_router.include_router(simulations.router, prefix="/simulations", tags=["simu
 api_router.include_router(runs.router, prefix="/runs", tags=["runs"])
 api_router.include_router(briefs.router, prefix="/briefs", tags=["briefs"])
 api_router.include_router(artifacts.router, prefix="/artifacts", tags=["artifacts"])
+api_router.include_router(internal.router, prefix="/internal", tags=["internal"])

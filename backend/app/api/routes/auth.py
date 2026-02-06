@@ -11,7 +11,7 @@ from app.core.hashing import hash_password, verify_password
 from app.core.security import create_access_token, create_refresh_token
 from app.core.ids import generate_id
 from app.db.session import get_db
-from app.db.models import User
+from app.db.models import User, Org, Membership, MembershipRole
 from app.deps import CurrentUser
 
 router = APIRouter()
@@ -47,6 +47,17 @@ class UserResponse(BaseModel):
     email: str
     name: str | None
     is_active: bool
+    org_id: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class OrgResponse(BaseModel):
+    """Organization response model."""
+
+    id: str
+    name: str
 
     class Config:
         from_attributes = True
@@ -57,7 +68,7 @@ async def register(
     request: RegisterRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenResponse:
-    """Register a new user."""
+    """Register a new user and auto-create their organization."""
     # Check if email already exists
     result = await db.execute(select(User).where(User.email == request.email))
     existing_user = result.scalar_one_or_none()
@@ -77,6 +88,24 @@ async def register(
     )
     db.add(user)
     await db.flush()
+
+    # Auto-create organization for the user
+    org_name = f"{request.name}'s Company" if request.name else "My Company"
+    org = Org(
+        id=generate_id(),
+        name=org_name,
+    )
+    db.add(org)
+    await db.flush()
+
+    # Create membership (user is owner of their org)
+    membership = Membership(
+        id=generate_id(),
+        org_id=org.id,
+        user_id=user.id,
+        role=MembershipRole.OWNER,
+    )
+    db.add(membership)
 
     # Generate tokens
     access_token = create_access_token(subject=user.id)
@@ -115,9 +144,52 @@ async def login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: CurrentUser) -> UserResponse:
-    """Get current user information."""
-    return UserResponse.model_validate(current_user)
+async def get_current_user_info(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> UserResponse:
+    """Get current user information including their org."""
+    # Get user's org membership
+    result = await db.execute(
+        select(Membership).where(Membership.user_id == current_user.id)
+    )
+    membership = result.scalar_one_or_none()
+
+    user_response = UserResponse.model_validate(current_user)
+    if membership:
+        user_response.org_id = membership.org_id
+    return user_response
+
+
+@router.get("/me/org", response_model=OrgResponse)
+async def get_current_user_org(
+    current_user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OrgResponse:
+    """Get current user's organization."""
+    # Get user's org membership
+    result = await db.execute(
+        select(Membership).where(Membership.user_id == current_user.id)
+    )
+    membership = result.scalar_one_or_none()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User has no organization",
+        )
+
+    # Get the org
+    result = await db.execute(select(Org).where(Org.id == membership.org_id))
+    org = result.scalar_one_or_none()
+
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    return OrgResponse.model_validate(org)
 
 
 @router.post("/logout")

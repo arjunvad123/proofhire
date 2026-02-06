@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createRole } from '@/lib/api';
+import { createRole, getCurrentOrg } from '@/lib/api';
 
 // Role Spec Interview Questions
 const INTERVIEW_QUESTIONS = [
@@ -57,6 +57,15 @@ export default function NewRolePage() {
   const [title, setTitle] = useState('Founding Backend Engineer');
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [loading, setLoading] = useState(false);
+  const [orgId, setOrgId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCurrentOrg().then((result) => {
+      if (result.data) {
+        setOrgId(result.data.id);
+      }
+    });
+  }, []);
 
   const currentQuestion = INTERVIEW_QUESTIONS[step];
   const isLastQuestion = step === INTERVIEW_QUESTIONS.length - 1;
@@ -85,15 +94,21 @@ export default function NewRolePage() {
 
   const handleNext = async () => {
     if (isLastQuestion) {
+      if (!orgId) {
+        alert('Organization not found. Please try logging in again.');
+        return;
+      }
       setLoading(true);
       // Create the role
-      const result = await createRole('current-org', {
+      const result = await createRole(orgId, {
         title,
         interview_answers: answers as Record<string, string>,
       });
 
       if (result.data) {
         router.push(`/roles/${result.data.id}`);
+      } else if (result.error) {
+        alert(result.error);
       }
       setLoading(false);
     } else {

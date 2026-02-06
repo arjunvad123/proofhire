@@ -1,0 +1,2 @@
+# No external dependencies for this simulation
+# The rate limiter uses only Python standard library

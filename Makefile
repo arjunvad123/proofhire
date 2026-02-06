@@ -31,7 +31,7 @@ dev-web:
 	cd web && npm run dev
 
 dev-runner:
-	cd runner && python runner.py
+	cd runner && python -m runner
 
 # Testing
 test:
@@ -61,6 +61,16 @@ clean:
 # Build
 build:
 	docker-compose build
+
+build-sandbox:
+	docker build -t proofhire-sandbox:latest ./runner/sandbox
+
+# Setup everything for first run
+setup: build-sandbox
+	docker-compose up -d postgres redis minio
+	sleep 5
+	docker-compose run --rm backend alembic upgrade head
+	@echo "Setup complete! Run 'make up' to start all services."
 
 # Install dependencies
 install:

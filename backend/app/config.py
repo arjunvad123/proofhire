@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     runner_memory_limit_mb: int = 512
     runner_cpu_limit: float = 1.0
 
+    # Internal API (for runner callbacks)
+    internal_api_key: str = "dev-internal-key-change-in-production"
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins from comma-separated string."""

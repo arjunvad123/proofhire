@@ -10,7 +10,7 @@ class RunnerConfig:
 
     # Redis
     redis_url: str
-    job_queue: str = "simulation_jobs"
+    job_queue: str = "proofhire:jobs"
     poll_timeout: int = 5
 
     # S3/MinIO
@@ -41,7 +41,7 @@ class RunnerConfig:
         """Load configuration from environment variables."""
         return cls(
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-            job_queue=os.getenv("JOB_QUEUE", "simulation_jobs"),
+            job_queue=os.getenv("JOB_QUEUE", "proofhire:jobs"),
             poll_timeout=int(os.getenv("POLL_TIMEOUT", "5")),
             s3_endpoint=os.getenv("S3_ENDPOINT", "http://minio:9000"),
             s3_bucket=os.getenv("S3_BUCKET", "proofhire-artifacts"),

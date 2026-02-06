@@ -2,20 +2,27 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { getRoles, Role } from '@/lib/api';
+import { getRoles, getCurrentOrg, Role } from '@/lib/api';
 
 export default function DashboardPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
+  const [orgId, setOrgId] = useState<string | null>(null);
 
   useEffect(() => {
-    // In a real app, we'd get the org ID from context/auth
-    const orgId = 'current-org';
-    getRoles(orgId).then((result) => {
-      if (result.data) {
-        setRoles(result.data);
+    // First get the user's org, then fetch roles
+    getCurrentOrg().then((orgResult) => {
+      if (orgResult.data) {
+        setOrgId(orgResult.data.id);
+        getRoles(orgResult.data.id).then((result) => {
+          if (result.data) {
+            setRoles(result.data);
+          }
+          setLoading(false);
+        });
+      } else {
+        setLoading(false);
       }
-      setLoading(false);
     });
   }, []);
 
