@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProofHire — Hire engineers with proof</title>
+    <meta name="description" content="ProofHire replaces resume screening with evidence: company-calibrated work samples, fail-closed evaluation, and a shareable Proof Brief." />
+
+    <!-- Tailwind CDN (PoC). For production, compile Tailwind. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+      /* Subtle grain for premium feel (optional) */
+      .grain:before{
+        content:"";
+        position:absolute; inset:0;
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='.12'/%3E%3C/svg%3E");
+        mix-blend-mode:overlay;
+        pointer-events:none;
+      }
+    </style>
+  </head>
+
+  <body class="bg-zinc-950 text-zinc-100 antialiased">
+    <!-- Background -->
+    <div class="relative overflow-hidden">
+      <div class="absolute inset-0 -z-10">
+        <div class="absolute -top-24 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-gradient-to-r from-indigo-500/20 via-sky-400/10 to-fuchsia-500/20 blur-3xl"></div>
+        <div class="absolute bottom-[-260px] right-[-260px] h-[520px] w-[520px] rounded-full bg-sky-400/10 blur-3xl"></div>
+      </div>
+
+      <!-- Nav -->
+      <header class="sticky top-0 z-40 border-b border-white/10 bg-zinc-950/70 backdrop-blur">
+        <div class="mx-auto max-w-6xl px-4">
+          <div class="flex h-16 items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-zinc-100/90 to-zinc-100/40"></div>
+              <span class="text-sm font-semibold tracking-wide">ProofHire</span>
+              <span class="ml-2 hidden rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-zinc-300 md:inline">
+                6,000+ engineers on the waitlist
+              </span>
+            </div>
+
+            <nav class="hidden items-center gap-6 text-sm text-zinc-300 md:flex">
+              <a href="#how" class="hover:text-white">How it works</a>
+              <a href="#what" class="hover:text-white">What you get</a>
+              <a href="#security" class="hover:text-white">Security</a>
+              <a href="#faq" class="hover:text-white">FAQ</a>
+            </nav>
+
+            <div class="flex items-center gap-2">
+              <a href="#talent" class="hidden rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 md:inline-flex">
+                Join talent network
+              </a>
+              <a href="#access" class="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-100">
+                Request early access
+              </a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Hero -->
+      <section class="relative grain">
+        <div class="mx-auto max-w-6xl px-4 pt-14 pb-10 md:pt-20 md:pb-16">
+          <div class="grid items-center gap-10 md:grid-cols-2">
+            <div>
+              <p class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
+                Built for early startups hiring 5–50 engineers
+                <span class="h-1 w-1 rounded-full bg-zinc-400"></span>
+                Evidence-first hiring
+              </p>
+
+              <h1 class="mt-5 text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
+                Hire engineers with <span class="text-white">proof</span> — not resumes.
+              </h1>
+
+              <p class="mt-4 max-w-xl text-base leading-relaxed text-zinc-300 md:text-lg">
+                ProofHire runs a company-calibrated work sample and generates a shareable Proof Brief:
+                what's proven, what isn't, and what to ask next—so you can move fast without guessing.
+              </p>
+
+              <div class="mt-6 flex flex-col gap-3 sm:flex-row">
+                <a href="#access" class="inline-flex items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-950 hover:bg-zinc-100">
+                  Request early access
+                </a>
+                <button id="openDemo" class="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10">
+                  See a sample proof brief
+                </button>
+              </div>
+
+              <div class="mt-6 flex items-center gap-4 text-sm text-zinc-400">
+                <div class="flex -space-x-2">
+                  <div class="h-8 w-8 rounded-full border border-zinc-900 bg-zinc-800"></div>
+                  <div class="h-8 w-8 rounded-full border border-zinc-900 bg-zinc-800"></div>
+                  <div class="h-8 w-8 rounded-full border border-zinc-900 bg-zinc-800"></div>
+                </div>
+                <p>
+                  <span class="text-zinc-200 font-medium">6,000+</span> engineers waiting.
+                  Invite candidates when you're ready.
+                </p>
+              </div>
+            </div>
+
+            <!-- Proof Brief card -->
+            <div class="relative">
+              <div class="absolute -inset-1 rounded-3xl bg-gradient-to-r from-indigo-500/30 via-sky-400/20 to-fuchsia-500/30 blur-xl"></div>
+              <div class="relative rounded-3xl border border-white/10 bg-zinc-950/60 p-6 backdrop-blur">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 class="text-sm font-semibold text-white">Candidate Proof Brief (example)</h3>
+                    <p class="mt-1 text-xs text-zinc-400">Evidence-backed summary for fast founder review</p>
+                  </div>
+                  <span class="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-zinc-300">Shareable link</span>
+                </div>
+
+                <div class="mt-5 space-y-3">
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div>
+                      <p class="text-sm font-medium">Correctness</p>
+                      <p class="text-xs text-zinc-400">Tests + logs verify required behavior</p>
+                    </div>
+                    <span class="rounded-full bg-emerald-400/15 px-2 py-1 text-xs font-semibold text-emerald-200">Proved</span>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div>
+                      <p class="text-sm font-medium">Testing habits</p>
+                      <p class="text-xs text-zinc-400">Coverage + case quality extracted</p>
+                    </div>
+                    <span class="rounded-full bg-amber-400/15 px-2 py-1 text-xs font-semibold text-amber-200">Partially proved</span>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div>
+                      <p class="text-sm font-medium">Code quality</p>
+                      <p class="text-xs text-zinc-400">Diff review + complexity signals</p>
+                    </div>
+                    <span class="rounded-full bg-emerald-400/15 px-2 py-1 text-xs font-semibold text-emerald-200">Proved</span>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div>
+                      <p class="text-sm font-medium">Communication</p>
+                      <p class="text-xs text-zinc-400">Turn unproved areas into interview prompts</p>
+                    </div>
+                    <span class="rounded-full bg-zinc-200/10 px-2 py-1 text-xs font-semibold text-zinc-200">Unproved</span>
+                  </div>
+                </div>
+
+                <div class="mt-5 flex items-center justify-between">
+                  <p class="text-xs text-zinc-400">Typical founder review time: ~5–8 minutes</p>
+                  <button id="openDemo2" class="text-sm font-semibold text-white underline decoration-white/20 underline-offset-4 hover:decoration-white/60">
+                    Open full brief
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Logos row (optional placeholders) -->
+          <div class="mt-12 border-t border-white/10 pt-8 text-zinc-400">
+            <p class="text-xs uppercase tracking-widest">Designed for early teams</p>
+            <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-center text-sm">Startup</div>
+              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-center text-sm">Seed</div>
+              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-center text-sm">Series A</div>
+              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-center text-sm">DevTools</div>
+              <div class="rounded-xl border border-white/10 bg-white/5 p-3 text-center text-sm">AI</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Problem -->
+      <section class="mx-auto max-w-6xl px-4 py-14">
+        <div class="grid gap-10 md:grid-cols-2">
+          <div>
+            <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">The hiring stack wasn't built for startups.</h2>
+            <p class="mt-3 text-zinc-300 leading-relaxed">
+              When your team is small, one weak hire creates drag everywhere: code quality, velocity, on-call, and morale.
+              ProofHire replaces narrative screening with work evidence you can trust.
+            </p>
+          </div>
+          <div class="grid gap-3">
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="font-medium">Resumes are narrative</p>
+              <p class="mt-1 text-sm text-zinc-300">They don't show debugging, tradeoffs, or how someone ships.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="font-medium">Interviews are noisy</p>
+              <p class="mt-1 text-sm text-zinc-300">Different interviewers, different outcomes. Hard to calibrate.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="font-medium">Take-homes are hard to compare</p>
+              <p class="mt-1 text-sm text-zinc-300">Review takes forever and decisions still feel subjective.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Solution -->
+      <section id="how" class="mx-auto max-w-6xl px-4 py-14">
+        <div class="rounded-3xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-8 md:p-10">
+          <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">ProofHire turns hiring into evidence.</h2>
+          <p class="mt-3 max-w-3xl text-zinc-300 leading-relaxed">
+            Candidates complete a realistic simulation. We capture artifacts (diffs, tests, logs, writeups) and generate a clean Proof Brief:
+            what's proven, what isn't, and what to verify live.
+          </p>
+
+          <div class="mt-8 grid gap-4 md:grid-cols-3">
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="text-sm font-semibold">Work sample, not trivia</p>
+              <p class="mt-2 text-sm text-zinc-300">Bugfixes, feature slices, refactors—tasks that resemble startup work.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="text-sm font-semibold">Fail-closed evaluation</p>
+              <p class="mt-2 text-sm text-zinc-300">No guessing. Claims are Proved/Unproved with links to evidence.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="text-sm font-semibold">Founder-calibrated rubric</p>
+              <p class="mt-2 text-sm text-zinc-300">You choose what matters: speed vs rigor, testing bar, autonomy.</p>
+            </div>
+          </div>
+
+          <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href="#access" class="inline-flex items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-950 hover:bg-zinc-100">
+              Request early access
+            </a>
+            <button class="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10" id="openDemo3">
+              View sample brief
+            </button>
+          </div>
+
+          <div class="mt-10 grid gap-4 md:grid-cols-3">
+            <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-6">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Step 1</p>
+              <p class="mt-2 font-semibold">Calibrate (10 minutes)</p>
+              <p class="mt-2 text-sm text-zinc-300">Answer a few questions about pace, quality bar, and what "good" means here.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-6">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Step 2</p>
+              <p class="mt-2 font-semibold">Candidates run the simulation</p>
+              <p class="mt-2 text-sm text-zinc-300">Secure sandbox. Deterministic grading. Artifacts captured automatically.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-6">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Step 3</p>
+              <p class="mt-2 font-semibold">You review the Proof Brief</p>
+              <p class="mt-2 text-sm text-zinc-300">Evidence links + risk flags + interview prompts. Easy to share with co-founders.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- What you get -->
+      <section id="what" class="mx-auto max-w-6xl px-4 py-14">
+        <div class="grid gap-10 md:grid-cols-2">
+          <div>
+            <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">Everything you wish you had during interviews.</h2>
+            <p class="mt-3 text-zinc-300 leading-relaxed">
+              ProofHire produces a packet you can actually make decisions with—consistent across candidates, grounded in artifacts.
+            </p>
+            <ul class="mt-6 space-y-3 text-zinc-200">
+              <li class="rounded-xl border border-white/10 bg-white/5 p-4">A shareable <span class="font-semibold">Proof Brief</span> per candidate</li>
+              <li class="rounded-xl border border-white/10 bg-white/5 p-4">Evidence: diffs, test runs, logs, coverage, writeups</li>
+              <li class="rounded-xl border border-white/10 bg-white/5 p-4">Company-calibrated scoring across dimensions you choose</li>
+              <li class="rounded-xl border border-white/10 bg-white/5 p-4"><span class="font-semibold">Interview prompts</span> generated from what's unproved</li>
+              <li class="rounded-xl border border-white/10 bg-white/5 p-4">Consistent comparison even with different interviewers</li>
+            </ul>
+          </div>
+
+          <div class="rounded-3xl border border-white/10 bg-white/5 p-8">
+            <p class="text-xs uppercase tracking-widest text-zinc-400">Founder outcome</p>
+            <h3 class="mt-3 text-xl font-semibold">Spend less time debating. More time building.</h3>
+            <p class="mt-3 text-zinc-300 leading-relaxed">
+              For early teams, speed matters—but so does correctness. ProofHire helps you move fast with a documented standard and clear evidence.
+            </p>
+
+            <div class="mt-6 grid gap-3">
+              <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-5">
+                <p class="font-medium">Faster shortlist</p>
+                <p class="mt-1 text-sm text-zinc-300">Review a brief in minutes instead of replaying an hour-long interview.</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-5">
+                <p class="font-medium">Less interviewer variance</p>
+                <p class="mt-1 text-sm text-zinc-300">A consistent rubric and evidence packet across candidates.</p>
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-zinc-950/40 p-5">
+                <p class="font-medium">Clear next questions</p>
+                <p class="mt-1 text-sm text-zinc-300">Unproved areas become structured prompts for a focused live interview.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Two-column: Startups vs Candidates -->
+      <section id="talent" class="mx-auto max-w-6xl px-4 py-14">
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="rounded-3xl border border-white/10 bg-white/5 p-8">
+            <h3 class="text-xl font-semibold">For Startups</h3>
+            <p class="mt-2 text-zinc-300">Move fast without lowering the bar.</p>
+            <ul class="mt-5 space-y-2 text-sm text-zinc-200">
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Standardize evaluation without acting like BigCo</li>
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Reduce interview load and co-founder debate</li>
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Keep hiring decisions grounded in job-relevant evidence</li>
+            </ul>
+            <a href="#access" class="mt-6 inline-flex items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-950 hover:bg-zinc-100">
+              Request early access
+            </a>
+          </div>
+
+          <div class="rounded-3xl border border-white/10 bg-white/5 p-8">
+            <h3 class="text-xl font-semibold">For Candidates</h3>
+            <p class="mt-2 text-zinc-300">Get hired for what you can do.</p>
+            <ul class="mt-5 space-y-2 text-sm text-zinc-200">
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Show real work, not keyword storytelling</li>
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Reuse your Proof Profile across multiple startups</li>
+              <li class="rounded-xl border border-white/10 bg-zinc-950/40 p-4">Join a network with 6,000+ engineers already waiting</li>
+            </ul>
+            <a href="#access" class="mt-6 inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10">
+              Join the talent network
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Security -->
+      <section id="security" class="mx-auto max-w-6xl px-4 py-14">
+        <div class="rounded-3xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-8 md:p-10">
+          <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">Secure by default. Built to be auditable.</h2>
+          <div class="mt-6 grid gap-4 md:grid-cols-2">
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="font-semibold">Isolated execution</p>
+              <p class="mt-2 text-sm text-zinc-300">Sandboxed runs with resource limits and controlled environment for consistency.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="font-semibold">Evidence trail</p>
+              <p class="mt-2 text-sm text-zinc-300">Every result points back to artifacts (diffs, tests, logs) so reviews are defensible.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="font-semibold">Configurable collection</p>
+              <p class="mt-2 text-sm text-zinc-300">Control what you collect and retain. Start without repo access.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <p class="font-semibold">Job-relevant signals</p>
+              <p class="mt-2 text-sm text-zinc-300">Focus on demonstrated work and artifacts—no reliance on resume credentials.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section id="faq" class="mx-auto max-w-6xl px-4 py-14">
+        <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">FAQ</h2>
+        <div class="mt-6 grid gap-4 md:grid-cols-2">
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <p class="font-semibold">Is this a take-home?</p>
+            <p class="mt-2 text-sm text-zinc-300">It's a structured work sample designed to be bounded, comparable, and easy to review.</p>
+          </div>
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <p class="font-semibold">Can candidates use AI tools?</p>
+            <p class="mt-2 text-sm text-zinc-300">Configurable per company. We're built to evaluate outcomes and engineering judgment.</p>
+          </div>
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <p class="font-semibold">How long does setup take?</p>
+            <p class="mt-2 text-sm text-zinc-300">Minutes to calibrate. You can invite candidates immediately.</p>
+          </div>
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <p class="font-semibold">Do we need to share our private repo?</p>
+            <p class="mt-2 text-sm text-zinc-300">Not to start. Early access can run on standardized simulations.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Access form -->
+      <section id="access" class="mx-auto max-w-6xl px-4 pb-20">
+        <div class="rounded-3xl border border-white/10 bg-white/5 p-8 md:p-10">
+          <div class="grid items-center gap-8 md:grid-cols-2">
+            <div>
+              <h2 class="text-2xl font-semibold tracking-tight md:text-3xl">Your next hire should come with evidence.</h2>
+              <p class="mt-3 text-zinc-300 leading-relaxed">
+                Request early access for your startup, or join the talent network to get matched with teams that hire based on real work.
+              </p>
+              <p class="mt-4 text-sm text-zinc-400">
+                Tip: If you're hiring now, include your role + timeline—responses are prioritized.
+              </p>
+            </div>
+
+            <form class="rounded-2xl border border-white/10 bg-zinc-950/40 p-6" onsubmit="event.preventDefault(); alert('Thanks! We will be in touch soon.');">
+              <label class="block text-sm font-medium text-zinc-200">Work email</label>
+              <input class="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                     placeholder="you@startup.com" type="email" required />
+
+              <label class="mt-4 block text-sm font-medium text-zinc-200">I'm here as</label>
+              <select class="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-400/40">
+                <option>Founder / Hiring manager</option>
+                <option>Candidate</option>
+              </select>
+
+              <label class="mt-4 block text-sm font-medium text-zinc-200">Hiring need (optional)</label>
+              <input class="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                     placeholder="Backend engineer, hiring this month" />
+
+              <button class="mt-5 w-full rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-950 hover:bg-zinc-100">
+                Join early access
+              </button>
+
+              <p class="mt-3 text-xs text-zinc-400">
+                By submitting, you agree to be contacted about early access. No spam.
+              </p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="border-t border-white/10 bg-zinc-950">
+        <div class="mx-auto max-w-6xl px-4 py-10">
+          <div class="flex flex-col justify-between gap-6 md:flex-row md:items-center">
+            <div>
+              <p class="text-sm font-semibold">ProofHire</p>
+              <p class="mt-1 text-sm text-zinc-400">Evidence-first hiring for early startups.</p>
+            </div>
+            <div class="flex gap-5 text-sm text-zinc-400">
+              <a href="#how" class="hover:text-white">How it works</a>
+              <a href="#security" class="hover:text-white">Security</a>
+              <a href="#faq" class="hover:text-white">FAQ</a>
+            </div>
+          </div>
+          <p class="mt-8 text-xs text-zinc-500">© <span id="year"></span> ProofHire. All rights reserved.</p>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Demo modal -->
+    <div id="demoModal" class="fixed inset-0 z-50 hidden">
+      <div class="absolute inset-0 bg-black/70"></div>
+      <div class="absolute inset-0 grid place-items-center p-4">
+        <div class="w-full max-w-3xl rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
+          <div class="flex items-start justify-between gap-6">
+            <div>
+              <p class="text-sm font-semibold">Sample Proof Brief</p>
+              <p class="mt-1 text-sm text-zinc-400">This is what founders receive after a candidate completes a simulation.</p>
+            </div>
+            <button id="closeDemo" class="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10">
+              Close
+            </button>
+          </div>
+
+          <div class="mt-5 grid gap-3 md:grid-cols-2">
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Proved</p>
+              <p class="mt-2 font-semibold">Implemented required behavior</p>
+              <p class="mt-2 text-sm text-zinc-300">Evidence: test logs + diff link + passing suite.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Proved</p>
+              <p class="mt-2 font-semibold">Readable, maintainable changes</p>
+              <p class="mt-2 text-sm text-zinc-300">Evidence: small commits, low complexity delta, clear naming.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Unproved</p>
+              <p class="mt-2 font-semibold">API design under ambiguity</p>
+              <p class="mt-2 text-sm text-zinc-300">Interview prompts: tradeoffs, constraints, edge cases.</p>
+            </div>
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p class="text-xs uppercase tracking-widest text-zinc-400">Unproved</p>
+              <p class="mt-2 font-semibold">Production readiness habits</p>
+              <p class="mt-2 text-sm text-zinc-300">Interview prompts: monitoring, rollback, failure modes.</p>
+            </div>
+          </div>
+
+          <div class="mt-6 rounded-2xl border border-white/10 bg-zinc-950/40 p-5">
+            <p class="text-sm font-semibold">Suggested next interview (30 minutes)</p>
+            <ol class="mt-2 list-decimal pl-5 text-sm text-zinc-300 space-y-1">
+              <li>Walk through one design decision and alternatives.</li>
+              <li>Ask for edge cases and failure modes they'd monitor.</li>
+              <li>Have them improve one test for better coverage/meaning.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const modal = document.getElementById('demoModal');
+      const openButtons = [document.getElementById('openDemo'), document.getElementById('openDemo2'), document.getElementById('openDemo3')].filter(Boolean);
+      const close = document.getElementById('closeDemo');
+
+      openButtons.forEach(btn => btn.addEventListener('click', () => modal.classList.remove('hidden')));
+      close.addEventListener('click', () => modal.classList.add('hidden'));
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+      document.getElementById('year').textContent = new Date().getFullYear();
+    </script>
+  </body>
+</html>

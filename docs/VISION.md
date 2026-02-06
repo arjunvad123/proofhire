@@ -1,14 +1,12 @@
-# ProofHire: Model-to-Model Talent Matching
+# ProofHire: Evidence-Based Technical Hiring
 
 ## Executive Summary
 
-ProofHire is building the infrastructure to replace resume-based hiring with **model-to-model matching** — where a computational model of a company's engineering culture and needs is matched against a computational model of a candidate's skills, behaviors, and working style.
+ProofHire replaces resume-based hiring with **evidence-based evaluation** — candidates complete company-calibrated work samples, and founders receive a shareable Proof Brief showing what's proven, what isn't, and what to ask next.
 
-Instead of humans pattern-matching keywords on resumes to job descriptions, ProofHire enables:
-
-- **Companies** to express what they need through a trained model that understands their codebase, culture, and priorities
-- **Candidates** to demonstrate who they are through a behavioral model captured from real work
-- **Matching** that happens at the model level — precise, explainable, and bias-resistant
+**Core value proposition:**
+- **For startups:** Move fast without lowering the bar. Get consistent, defensible hiring decisions.
+- **For candidates:** Get hired for what you can do, not what you claim.
 
 ---
 
@@ -16,135 +14,71 @@ Instead of humans pattern-matching keywords on resumes to job descriptions, Proo
 
 ### Current State of Technical Hiring
 
-1. **Resumes are low-signal** — They capture credentials, not capabilities. A resume says "5 years of Python" but nothing about debugging intuition, code quality standards, or collaboration style.
+1. **Resumes are narrative** — They capture credentials, not capabilities. "5 years of Python" says nothing about debugging intuition or code quality.
 
-2. **Interviews are inconsistent** — Different interviewers evaluate differently. The same candidate gets different outcomes based on who interviews them.
+2. **Interviews are noisy** — Different interviewers evaluate differently. Same candidate, different outcomes.
 
-3. **Job descriptions are wishful thinking** — Companies list requirements they think they need, often misaligned with what actually predicts success in the role.
+3. **Take-homes are painful** — Hard to compare, hard to justify, hard to scale.
 
-4. **No ground truth** — There's no systematic way to learn what actually makes someone successful at a specific company.
+4. **A bad hire is existential** — When your team is 6 people, one weak hire creates drag everywhere: code quality, velocity, on-call, morale.
 
 ### The Fundamental Mismatch
 
-Companies try to describe what they want in natural language (job descriptions).
-Candidates try to describe what they offer in natural language (resumes).
-Humans try to match these descriptions through conversation (interviews).
+Companies describe what they want in natural language (job descriptions).
+Candidates describe what they offer in natural language (resumes).
+Humans match these through conversation (interviews).
 
 Every step loses information. Every step introduces bias.
 
 ---
 
-## Our Vision: Model-to-Model Matching
+## Our Solution: Evidence-First Hiring
 
 ### Core Concept
 
-Replace natural language descriptions with **computational models** that capture the full dimensionality of what companies need and what candidates offer.
+Replace narrative screening with **work evidence** you can trust:
+
+1. **Candidates complete a realistic work sample** (bugfix, feature slice, refactor)
+2. **System captures artifacts** (diffs, tests, logs, coverage, writeups)
+3. **Proof engine evaluates claims** against evidence
+4. **Founder receives a Proof Brief** with proven/unproven claims and interview prompts
+
+### The Proof Brief
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
+│  CANDIDATE PROOF BRIEF                                          │
+├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│   COMPANY MODEL                      CANDIDATE MODEL            │
-│   ─────────────                      ───────────────            │
+│  Correctness        [PROVED]     Tests + logs verify behavior   │
+│  Testing habits     [PARTIAL]    Coverage good, edge cases weak │
+│  Code quality       [PROVED]     Diff review + complexity ok    │
+│  Communication      [UNPROVED]   → Interview prompts generated  │
 │                                                                 │
-│   ┌─────────────────┐                ┌─────────────────┐        │
-│   │ Codebase DNA    │                │ Skill Embedding │        │
-│   │ • Patterns      │                │ • From work     │        │
-│   │ • Conventions   │                │ • From behavior │        │
-│   │ • Complexity    │                │ • From output   │        │
-│   └────────┬────────┘                └────────┬────────┘        │
-│            │                                  │                 │
-│   ┌────────▼────────┐                ┌────────▼────────┐        │
-│   │ Culture Vector  │                │ Behavior Model  │        │
-│   │ • Pace          │                │ • How they debug│        │
-│   │ • Quality bar   │                │ • How they learn│        │
-│   │ • Autonomy      │                │ • How they ship │        │
-│   └────────┬────────┘                └────────┬────────┘        │
-│            │                                  │                 │
-│   ┌────────▼────────┐                ┌────────▼────────┐        │
-│   │ Success Profile │                │ Work Style      │        │
-│   │ • From alumni   │                │ • Agentic flow  │        │
-│   │ • From founders │                │ • Tool usage    │        │
-│   │ • From outcomes │                │ • Iteration     │        │
-│   └────────┬────────┘                └────────┬────────┘        │
-│            │                                  │                 │
-│            └──────────────┬───────────────────┘                 │
-│                           │                                     │
-│                    ┌──────▼──────┐                              │
-│                    │   MATCH     │                              │
-│                    │   SCORE     │                              │
-│                    │             │                              │
-│                    │ Similarity  │                              │
-│                    │ Gaps        │                              │
-│                    │ Fit areas   │                              │
-│                    └─────────────┘                              │
+│  ─────────────────────────────────────────────────────────────  │
+│                                                                 │
+│  SUGGESTED INTERVIEW (30 min):                                  │
+│  1. Walk through one design decision and alternatives           │
+│  2. Ask for edge cases and failure modes they'd monitor         │
+│  3. Have them improve one test for better coverage              │
+│                                                                 │
+│  Evidence links: [diff] [test-log] [coverage] [writeup]         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### B2B: The Company Model
+### Key Properties
 
-**Input Sources:**
-- Company codebase (GitHub/GitLab integration)
-- Engineering documentation and RFCs
-- Founder/hiring manager interview
-- Historical hiring outcomes (who succeeded, who didn't)
-- PR review patterns and coding standards
-
-**What the Model Captures:**
-- **Codebase DNA** — Architectural patterns, language idioms, complexity distribution, test coverage norms
-- **Culture Vector** — Pace of shipping, quality bar, tolerance for ambiguity, review rigor
-- **Success Profile** — Behavioral patterns of engineers who thrived vs. struggled
-
-**Output:**
-- A trained model (fine-tuned LLM or embedding space) that can:
-  - Generate relevant coding challenges from the company's actual patterns
-  - Evaluate candidate work against company-specific standards
-  - Predict cultural fit based on behavioral signals
-
-### B2C: The Candidate Model
-
-**Input Sources:**
-- Work simulation (observed in real-time)
-- Behavioral telemetry during the simulation
-- Code output and artifacts
-- Written communication (PR descriptions, technical writeups)
-- Optional: GitHub history, portfolio projects
-
-**What the Model Captures:**
-- **Skill Embedding** — Technical capabilities demonstrated through work, not claimed on resume
-- **Agentic Workflow** — How they approach problems (systematic vs. exploratory, depth-first vs. breadth-first)
-- **Behavioral Fingerprint** — Debugging patterns, refactoring tendencies, documentation habits
-
-**Output:**
-- A candidate model that can be:
-  - Compared against any company model for fit scoring
-  - Explained in human terms ("strong debugger, prefers depth over breadth, high code quality standards")
-  - Updated as the candidate completes more work samples
-
-### The Match
-
-Instead of humans reading resumes and making gut calls:
-
-```python
-match_score = similarity(company_model, candidate_model)
-gap_analysis = identify_gaps(company_model, candidate_model)
-fit_areas = identify_strengths(company_model, candidate_model)
-interview_focus = generate_questions(gap_analysis)
-```
-
-**Properties of model-to-model matching:**
-- **Deterministic** — Same inputs produce same outputs
-- **Explainable** — Every score traces back to specific evidence
-- **Bias-resistant** — Models don't see names, schools, or demographics
-- **Learnable** — System improves as we see hiring outcomes
+- **Fail-closed** — We don't guess. Claims are PROVED or UNPROVED with artifact links.
+- **Company-calibrated** — You set what matters (speed vs rigor, testing bar, autonomy).
+- **Defensible** — Every result traces to evidence. No mystery scoring.
+- **Fast to review** — Typical founder review time: 5–8 minutes per brief.
 
 ---
 
 ## Technical Architecture
 
-### Current Implementation (Phase 1: Rule-Based Foundation)
-
-We've built the infrastructure layer that will power the model-based system:
+### Current Implementation (v1.0)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -153,219 +87,165 @@ We've built the infrastructure layer that will power the model-based system:
 │                                                                 │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
 │  │   FOUNDER    │    │  SIMULATION  │    │    PROOF     │      │
-│  │  INTERVIEW   │───▶│   SANDBOX    │───▶│   ENGINE     │      │
+│  │  CALIBRATION │───▶│   SANDBOX    │───▶│   ENGINE     │      │
 │  │              │    │              │    │              │      │
-│  │ 4 questions  │    │ Docker       │    │ Rule-based   │      │
-│  │ about pace,  │    │ isolated     │    │ claim        │      │
-│  │ quality,     │    │ execution    │    │ evaluation   │      │
-│  │ priorities   │    │              │    │              │      │
+│  │ Set rubric   │    │ Docker       │    │ Rule-based   │      │
+│  │ weights for  │    │ isolated     │    │ claim        │      │
+│  │ your startup │    │ execution    │    │ evaluation   │      │
 │  └──────────────┘    └──────────────┘    └──────────────┘      │
 │         │                   │                   │               │
 │         ▼                   ▼                   ▼               │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │     COM      │    │  ARTIFACTS   │    │    BRIEF     │      │
+│  │     COM      │    │  ARTIFACTS   │    │ PROOF BRIEF  │      │
 │  │              │    │              │    │              │      │
-│  │ Company      │    │ • Diffs      │    │ Proven/      │      │
-│  │ Operating    │    │ • Test logs  │    │ Unproven     │      │
-│  │ Model (JSON) │    │ • Coverage   │    │ Claims       │      │
-│  │              │    │ • Metrics    │    │              │      │
+│  │ Company      │    │ • Diffs      │    │ • Proved     │      │
+│  │ Operating    │    │ • Test logs  │    │ • Unproved   │      │
+│  │ Model        │    │ • Coverage   │    │ • Interview  │      │
+│  │              │    │ • Writeups   │    │   prompts    │      │
 │  └──────────────┘    └──────────────┘    └──────────────┘      │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**What We've Built:**
+### What We've Built
 
 | Component | Description | Status |
 |-----------|-------------|--------|
-| **Simulation Sandbox** | Docker-based isolated execution environment with resource limits, network isolation, and deterministic grading | ✅ Complete |
-| **Artifact Pipeline** | Collection and storage of all candidate outputs (diffs, test logs, coverage reports, writeups) | ✅ Complete |
-| **Evidence Extractors** | Parsers for different artifact types to extract structured data | ✅ Complete |
-| **Proof Engine** | Rule-based evaluation that marks claims as PROVED or UNPROVED | ✅ Complete |
-| **Brief Generator** | Templated output of evaluation results with evidence links | ✅ Complete |
-| **Company Operating Model** | JSON representation of company preferences from founder interview | ✅ Complete |
+| **Simulation Sandbox** | Docker-based isolated execution with resource limits and deterministic grading | ✅ Complete |
+| **Artifact Pipeline** | Collection of all candidate outputs (diffs, test logs, coverage, writeups) | ✅ Complete |
+| **Evidence Extractors** | Parsers for artifact types to extract structured data | ✅ Complete |
+| **Proof Engine** | Rule-based evaluation marking claims as PROVED or UNPROVED | ✅ Complete |
+| **Brief Generator** | Shareable output with evidence links and interview prompts | ✅ Complete |
+| **Company Operating Model** | Calibration from founder interview | ✅ Complete |
 | **Rubric System** | Weighted dimensions (correctness, testing, code quality, communication) | ✅ Complete |
 
-**Current Limitations (To Be Replaced by Models):**
+---
 
-| Current | Future |
-|---------|--------|
-| 4-question founder interview | Codebase analysis + fine-tuning |
-| Pre-built static simulations | Dynamically generated from company patterns |
-| Binary test pass/fail metrics | Behavioral telemetry + skill embedding |
-| Threshold-based rules | Model similarity scoring |
+## What's Genuinely Strong
 
-### Target Architecture (Phase 2: Model-Based)
+### 1. Fail-Closed Evidence Orientation
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        PROOFHIRE v2.0                           │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  COMPANY SIDE                          CANDIDATE SIDE           │
-│  ────────────                          ──────────────           │
-│                                                                 │
-│  ┌──────────────┐                      ┌──────────────┐        │
-│  │   CODEBASE   │                      │  SIMULATION  │        │
-│  │   INGESTION  │                      │  + TELEMETRY │        │
-│  │              │                      │              │        │
-│  │ • Clone repo │                      │ • Keystrokes │        │
-│  │ • Parse AST  │                      │ • File nav   │        │
-│  │ • Extract    │                      │ • Search     │        │
-│  │   patterns   │                      │ • Debugging  │        │
-│  └──────┬───────┘                      └──────┬───────┘        │
-│         │                                     │                 │
-│         ▼                                     ▼                 │
-│  ┌──────────────┐                      ┌──────────────┐        │
-│  │   COMPANY    │                      │  CANDIDATE   │        │
-│  │   ENCODER    │                      │   ENCODER    │        │
-│  │              │                      │              │        │
-│  │ Fine-tuned   │                      │ Behavioral   │        │
-│  │ on codebase  │                      │ embedding    │        │
-│  │ + founder    │                      │ from work    │        │
-│  │ preferences  │                      │              │        │
-│  └──────┬───────┘                      └──────┬───────┘        │
-│         │                                     │                 │
-│         ▼                                     ▼                 │
-│  ┌──────────────┐                      ┌──────────────┐        │
-│  │   COMPANY    │                      │  CANDIDATE   │        │
-│  │    MODEL     │◄────────────────────▶│    MODEL     │        │
-│  │              │     MATCHING         │              │        │
-│  │ Embedding in │                      │ Embedding in │        │
-│  │ shared space │                      │ shared space │        │
-│  └──────────────┘                      └──────────────┘        │
-│                                                                 │
-│                    ┌──────────────┐                             │
-│                    │    MATCH     │                             │
-│                    │   REPORT     │                             │
-│                    │              │                             │
-│                    │ • Score      │                             │
-│                    │ • Gaps       │                             │
-│                    │ • Strengths  │                             │
-│                    │ • Questions  │                             │
-│                    └──────────────┘                             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+Most assessment vendors produce a score that pretends to be ground truth. Our "proved/unproved with artifact links" is:
+- What buyers trust
+- What legal teams tolerate
+- What candidates accept
+
+**Key advantage:** We sell "decision support + structured interview focus," not "AI decides."
+
+### 2. Systems Layer First
+
+Deterministic sandboxing, artifact capture, reproducibility, and audit trails are the hard parts. With this foundation, we can iterate on scoring/ML later.
+
+### 3. Company Operating Model (COM)
+
+A structured "how we build software here" profile useful for:
+- Rubric calibration
+- Interview planning
+- Aligning hiring managers internally
+- Consistent evaluation across interviewers
 
 ---
 
-## Intellectual Property & Novel Contributions
+## Critical Gaps & Risks (Honest Assessment)
 
-### 1. Company Operating Model (COM) Framework
+### A. "Success Profile" Learning Requires Scale
 
-**What it is:** A structured representation of how a company operates that can be derived from multiple sources and used to calibrate evaluation.
+To learn "engineers who thrive here," you need:
+- Enough hires per company
+- Clean outcome labels (performance, retention)
+- Stable team/context
+- Feedback loops that aren't biased
 
-**Novel aspects:**
-- Captures dimensions that predict engineering success (pace, quality bar, ambiguity tolerance, priorities)
-- Designed to be populated by interview, codebase analysis, or outcome learning
-- Serves as the "training signal" for company-specific evaluation
+**Reality:** Most startups hire 5–30 engineers/year. Not enough to train on.
 
-**Current IP:**
-- COM schema and derivation logic
-- Interview-to-COM mapping algorithms
-- Rubric generation from COM
+**Implication:** System must work without outcome-trained models.
 
-### 2. Fail-Closed Proof Engine
+### B. "Bias-Resistant" Claims Need Careful Framing
 
-**What it is:** An evaluation system that explicitly marks claims as PROVED or UNPROVED, never guessing.
+Even hiding names/schools, we risk learning proxies:
+- Writing style, time-of-day patterns
+- Keystroke rhythms (can correlate with disability)
+- Native language effects
 
-**Novel aspects:**
-- Every claim must be backed by deterministic evidence
-- Unproven claims become structured interview questions
-- Creates audit trail from claim → evidence → artifact
-- Designed for legal defensibility (no discriminatory inference)
+**Implication:**
+- Frame as "evidence-based, consistently applied rubric with audit logs"
+- Don't claim "bias-resistant" — claim "job-relevant signals from work samples"
+- Plan for subgroup performance measurement
 
-**Current IP:**
-- Proof rule specification language
-- Evidence-to-claim mapping
-- Unproven claim → interview question generation
+### C. Telemetry is a Product-Market Hazard
 
-### 3. Behavioral Telemetry Capture (Planned)
+Behavioral telemetry sounds high-signal but is:
+- Creepy to candidates
+- A compliance magnet (GDPR purpose limitation)
+- A proxy-risk generator
+- Easy to misinterpret (fast ≠ good)
 
-**What it is:** Recording of candidate workflow during simulation to build behavioral models.
+**Safer alternative:** Capture artifact-level workflow evidence:
+- Sequence of commits/diffs
+- Test iterations (red/green cycles)
+- Structured reflection prompts
 
-**Novel aspects:**
-- Captures *how* someone works, not just *what* they produce
-- Enables modeling of debugging intuition, exploration patterns, learning velocity
-- Creates rich signal beyond code output
+### D. Codebase Ingestion Requires Trust
 
-**Planned telemetry:**
-- Keystroke dynamics (not content, timing patterns)
-- File navigation sequences
-- Search query patterns
-- Error-correction cycles
-- Documentation reference patterns
+Companies worry about:
+- IP leakage
+- Security posture
+- Training on proprietary code
 
-### 4. Dynamic Benchmark Generation (Planned)
+**Implication:**
+- Start with standardized simulations, not private repos
+- Offer "no training retention" mode
+- Clear contractual terms
 
-**What it is:** Using company codebase to generate relevant, company-specific coding challenges.
+### E. AI Assistance Will Dominate
 
-**Novel aspects:**
-- Challenges mirror real work the candidate would do
-- Difficulty calibrated to company's actual codebase complexity
-- Can generate infinite variations to prevent cheating
-- Evolves as company codebase evolves
-
-**Approach:**
-- Parse company codebase for common patterns
-- Identify complexity hotspots
-- Generate synthetic bugs or feature requests
-- Validate with company engineers
-
-### 5. Dual-Embedding Match Space (Planned)
-
-**What it is:** Representing both companies and candidates as embeddings in a shared space for similarity computation.
-
-**Novel aspects:**
-- Same model architecture encodes both sides
-- Enables "companies like X hired candidates like Y" analysis
-- Matching is symmetric and explainable
-- Can identify gaps and strengths precisely
+Candidates will use AI tools. System must:
+- Explicitly define what's allowed per company
+- Evaluate outcomes and engineering judgment
+- Require reasoning artifacts, tests, tradeoff notes
 
 ---
 
-## Concept Demonstration
+## Positioning (Sharpened)
 
-### Scenario: Startup Hiring Backend Engineer
+### Don't Sell "Culture Fit"
 
-**Today (Industry Standard):**
-1. Founder writes job description based on intuition
-2. Candidates submit resumes
-3. Recruiter keyword-matches resumes
-4. Engineers conduct inconsistent interviews
-5. Hiring decision made on gut feel
-6. 6 months later: "not a culture fit"
+Sell **working-style requirements tied to job outcomes**:
+- "Writes high-coverage code under ambiguity"
+- "Strong PR communication"
+- Not "culture fit" (red-flag term legally)
 
-**With ProofHire (Current v1.0):**
-1. Founder answers 4 calibration questions
-2. System generates weighted rubric
-3. Candidate completes standardized simulation
-4. System collects deterministic evidence (tests, coverage, diff)
-5. Proof engine evaluates claims against evidence
-6. Founder receives brief with proven/unproven claims
-7. Interview focuses on unproven areas
+### Don't Lead with "Model-to-Model Matching"
 
-**With ProofHire (Future v2.0):**
-1. System analyzes company's GitHub → builds company model
-2. Founder confirms/adjusts model via conversation
-3. System generates company-specific simulation from codebase patterns
-4. Candidate completes simulation while behavioral telemetry captured
-5. System builds candidate model from behavior + output
-6. Models compared in shared embedding space
-7. Match report shows: fit score, specific gaps, specific strengths
-8. Interview questions generated from gap analysis
-9. Post-hire outcome feeds back to improve matching
+That sounds like "AI decides hiring" → triggers resistance.
 
-### Evidence of Concept Validity
+**Lead with:** "Company-calibrated work sample + proof packet + interview plan"
 
-**Why this approach works:**
+### Don't Claim "Bias-Resistant"
 
-1. **Information density** — A 2-hour simulation with telemetry captures more signal than a 2-page resume
-2. **Objectivity** — Models don't have "gut feelings" or unconscious bias
-3. **Learnability** — System improves as we observe hiring outcomes
-4. **Scalability** — Once company model exists, matching is instant
-5. **Defensibility** — Every decision traces to evidence, important for legal compliance
+**Claim:** "Evidence-based, consistently applied rubric with audit logs"
+
+---
+
+## The Wedge Product
+
+**"Company-calibrated work sample + proof packet + interview plan"**
+
+### Inputs
+- 10–15 min hiring manager calibration (COM)
+- Role expectations + sample PRs or style guide (optional)
+- Choose from library of job-realistic tasks
+
+### Outputs
+- **Proof packet** (what's proven, with links)
+- **Structured interview guide** (what to verify live)
+- **Risk flags** grounded in evidence
+
+### Why This Sells
+- Immediate ROI
+- Minimal trust barriers (no codebase ingest required)
+- Works with low data
+- Aligns with compliance ("here's the evidence")
 
 ---
 
@@ -376,62 +256,71 @@ We've built the infrastructure layer that will power the model-based system:
 | **HackerRank/LeetCode** | Algorithmic puzzles | Tests puzzle-solving, not real work |
 | **Triplebyte** (defunct) | Standardized quiz | One-size-fits-all, no company calibration |
 | **Karat** | Human interviewers | Expensive, inconsistent, not scalable |
-| **Vervoe** | Job simulations | No model-based matching, rule-based scoring |
+| **Vervoe** | Job simulations | No fail-closed evaluation, rule-based scoring |
 | **Pymetrics** | Behavioral games | No technical assessment, games ≠ work |
 | **Eightfold.ai** | Resume parsing + ML | Still based on resume claims, not demonstrated work |
 
-**ProofHire's differentiation:**
-- Only platform building company-specific models from codebase
-- Only platform capturing agentic workflow, not just output
+### ProofHire's Differentiation
 - Only platform with fail-closed, legally defensible evaluation
-- Only platform doing model-to-model matching
+- Only platform producing shareable Proof Briefs with artifact links
+- Only platform generating interview prompts from unproved claims
+- Built for early startups, not enterprise process
 
 ---
 
 ## Roadmap
 
-### Phase 1: Foundation (Current) ✅
+### Phase 1: Foundation ✅
 - Rule-based evaluation infrastructure
 - Simulation sandbox
 - Artifact collection
-- Basic COM from interview
-- Brief generation
+- Basic COM from calibration
+- Proof Brief generation
 
-### Phase 2: Telemetry (Next)
-- Add behavioral telemetry to sandbox
-- Capture workflow patterns
-- Build candidate behavior dataset
-- Early candidate embedding experiments
+### Phase 2: Signal Expansion
+- Add more simulation types (bugfix, feature, refactor)
+- Seeded-bug variant tasks (high signal, job-like)
+- Structured reflection prompts
+- Improved rubric taxonomy
 
-### Phase 3: Company Model
-- GitHub integration for codebase analysis
-- Code pattern extraction
-- Company embedding from codebase + interview
-- Dynamic simulation generation (basic)
+### Phase 3: Scale Features
+- ATS integration (Ashby, Lever, Greenhouse)
+- Candidate reusable profiles
+- Outcome feedback loop (where data exists)
+- Dynamic task variations (prevent cheating)
 
-### Phase 4: Full Model Matching
-- Shared embedding space for companies and candidates
+### Phase 4: Advanced (If/When Data Supports)
+- Company embedding from calibration + outcomes
 - Similarity-based matching
-- Outcome feedback loop
 - Continuous model improvement
 
 ---
 
-## Conclusion
+## Target Market
 
-ProofHire is building toward a future where hiring decisions are made by comparing computational models of companies and candidates — not by humans pattern-matching keywords on documents.
+**Primary:** Seed to Series A startups hiring first 5–50 engineers
 
-The current system establishes the infrastructure: secure execution, evidence collection, and structured evaluation. The roadmap adds the intelligence: behavioral modeling, company encoding, and model-based matching.
+**Buyer:** Founder / Head of Engineering / First EM
 
-The result is hiring that is:
-- **More accurate** — Based on demonstrated work, not claimed credentials
-- **More fair** — Models don't see protected attributes
-- **More efficient** — Matching is instant once models exist
-- **More defensible** — Every decision traces to evidence
+**Why startups:**
+- Feel the pain most acutely (one bad hire is existential)
+- Move fast, willing to try new tools
+- Less procurement friction than enterprise
+- Value speed + signal over process
 
 ---
 
-## Appendix: Technical Stack
+## Success Metrics (What We'll Measure)
+
+1. **Engineer interview hours saved** per hire
+2. **On-site-to-offer conversion** improvement
+3. **Hiring manager satisfaction** (NPS)
+4. **Candidate drop-off rate** (must stay low)
+5. **False negative audits** (strong candidates we rejected)
+
+---
+
+## Technical Stack
 
 | Layer | Technology |
 |-------|------------|
@@ -442,10 +331,25 @@ The result is hiring that is:
 | **Object Storage** | S3-compatible (MinIO in dev) |
 | **Sandbox** | Docker with resource limits, network isolation |
 | **Infrastructure** | Docker Compose (dev), Kubernetes (planned prod) |
-| **ML (Planned)** | PyTorch, Sentence Transformers, Fine-tuned LLMs |
 
 ---
 
-*Document Version: 1.0*
+## Conclusion
+
+ProofHire is building evidence-first hiring for early startups. The current system delivers:
+- Secure execution and artifact capture
+- Fail-closed evaluation with Proof Briefs
+- Company-calibrated rubrics
+- Interview prompts from unproved claims
+
+The result is hiring that is:
+- **Faster** — Review a brief in minutes, not an hour-long debrief
+- **More consistent** — Same rubric, same evidence standard
+- **More defensible** — Every decision traces to artifacts
+- **More focused** — Interviews target what's actually unproven
+
+---
+
+*Document Version: 2.0*
 *Last Updated: February 2026*
-*Status: Internal Draft*
+*Status: Internal*
