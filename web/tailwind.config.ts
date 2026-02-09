@@ -49,6 +49,18 @@ const config: Config = {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      fontFamily: {
+        ivy: ['Ivy Journal', 'Georgia', 'serif'],
+      },
+      keyframes: {
+        scroll: {
+          '0%': { transform: 'translateX(0)' },
+          '100%': { transform: 'translateX(-33.333%)' },
+        },
+      },
+      animation: {
+        scroll: 'scroll 40s linear infinite',
+      },
     },
   },
   plugins: [require('tailwindcss-animate')],
