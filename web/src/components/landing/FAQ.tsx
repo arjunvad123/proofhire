@@ -11,29 +11,44 @@ interface FAQItem {
 
 const faqs: FAQItem[] = [
   {
-    question: "How is this different from HackerRank / CodeSignal?",
+    question: "What exactly is the 'Company Model'?",
     answer: (
       <div className="space-y-3 text-sm">
-        <p>They mostly measure generic problem-solving with algorithmic puzzles.</p>
-        <p className="font-medium text-zinc-900">
-          Agencity measures job-relevant work and outputs a Proof Brief with evidence links—not a mystery score.
-        </p>
-        <p>You see exactly what was proven and what wasn't, with artifacts you can review yourself.</p>
+        <p>The Company Model is an executable evaluator + benchmark generator calibrated to your hiring bar. It outputs three things:</p>
+        <ul className="list-disc pl-4 space-y-1 text-zinc-700">
+          <li><strong>Benchmark Policy</strong> — What tasks to run, difficulty, timebox, allowed tools, scoring dimensions.</li>
+          <li><strong>Evidence Policy</strong> — What counts as proof, what's inadmissible, what must be verified live.</li>
+          <li><strong>Decision Support</strong> — Gap analysis + interview plan for what remains unproved.</li>
+        </ul>
+        <p>It's not a vibe detector, not "culture fit," and not a black-box ranker. It's your bar, made executable.</p>
       </div>
     ),
   },
   {
-    question: "What exactly are you evaluating?",
+    question: "How do you learn my company's bar with limited data?",
     answer: (
       <div className="space-y-3 text-sm">
-        <p>We evaluate what the work proves across four dimensions:</p>
+        <p>We don't need thousands of hires. The Company Model learns from:</p>
         <ul className="list-disc pl-4 space-y-1 text-zinc-700">
-          <li><strong>Correctness</strong> — Does it work? Tests pass, edge cases handled.</li>
-          <li><strong>Testing habits</strong> — Coverage, quality of test cases.</li>
-          <li><strong>Code quality</strong> — Structure, readability, maintainability.</li>
-          <li><strong>Communication</strong> — Written reasoning, tradeoff notes.</li>
+          <li><strong>15-minute calibration</strong> — Your pace, quality bar, autonomy expectations.</li>
+          <li><strong>2-5 exemplar PRs or style guides</strong> (optional) — What "good" looks like here.</li>
+          <li><strong>Preference labels</strong> — Pairwise comparisons: "Candidate A vs B for our bar."</li>
         </ul>
-        <p>Every evaluation links to artifacts: diffs, test logs, coverage reports.</p>
+        <p>The model adapts from your feedback, not from outcome-trained ML that requires scale you don't have.</p>
+      </div>
+    ),
+  },
+  {
+    question: "How is this different from HackerRank / CodeSignal?",
+    answer: (
+      <div className="space-y-3 text-sm">
+        <p>They run generic assessments and output a score.</p>
+        <p className="font-medium text-zinc-900">We build your Company Model, generate calibrated benchmarks, and output Proof Briefs with evidence links.</p>
+        <ul className="list-disc pl-4 space-y-1 text-zinc-700">
+          <li>Their tests are one-size-fits-all. Ours are tuned to your bar.</li>
+          <li>They give you a number. We show you what's proved and what isn't.</li>
+          <li>They're static. Our model adapts from your preferences.</li>
+        </ul>
       </div>
     ),
   },
@@ -41,8 +56,8 @@ const faqs: FAQItem[] = [
     question: "Can candidates use AI tools?",
     answer: (
       <div className="space-y-3 text-sm">
-        <p className="font-medium text-zinc-900">Configurable by company. Many startups allow AI—so we're built for it.</p>
-        <p>We evaluate engineering judgment, verification, and quality—not memorization. We measure:</p>
+        <p className="font-medium text-zinc-900">Configurable per company. Many startups allow AI—so we're built for it.</p>
+        <p>The Company Model's evidence policy defines what's allowed. We evaluate:</p>
         <ul className="list-disc pl-4 space-y-1 text-zinc-700">
           <li>How they integrate AI into their workflow</li>
           <li>Whether they catch and correct mistakes</li>
@@ -53,35 +68,31 @@ const faqs: FAQItem[] = [
     ),
   },
   {
-    question: "How long does it take candidates?",
+    question: "What's 'fail-closed' and why does it matter?",
     answer: (
       <div className="space-y-3 text-sm">
-        <p>Typically <strong>60-90 minutes</strong>.</p>
-        <p>It's designed to be bounded and comparable—closer to real work than an open-ended take-home that drags on for days.</p>
-      </div>
-    ),
-  },
-  {
-    question: "What is a 'Proof Brief'?",
-    answer: (
-      <div className="space-y-3 text-sm">
-        <p>A shareable, 1-page hiring packet showing:</p>
+        <p><strong>Fail-closed</strong> means: no proof = no claim. The Company Model can only score over admissible evidence features. It cannot invent hidden signals.</p>
+        <p>Why this matters:</p>
         <ul className="list-disc pl-4 space-y-1 text-zinc-700">
-          <li><strong>PROVED claims</strong> — with links to evidence (diffs, tests, coverage)</li>
-          <li><strong>UNPROVED claims</strong> — with suggested interview questions</li>
-          <li><strong>Interview plan</strong> — exactly what to verify in your 30-min call</li>
+          <li>Every claim links to an artifact (diff, test log, coverage report)</li>
+          <li>No guessing, no inference, no black-box scoring</li>
+          <li>Defensible decisions with full audit trail</li>
         </ul>
-        <p>Forward it to your co-founder. Review it in 5-8 minutes. Make a defensible decision.</p>
+        <p>The proof engine is the safety rail that makes the system trustworthy.</p>
       </div>
     ),
   },
   {
-    question: "Is this compliant / legally defensible?",
+    question: "What about finding candidates who match our gaps?",
     answer: (
       <div className="space-y-3 text-sm">
-        <p>We focus on <strong>job-relevant evidence</strong> from the work sample, not proxies or claims.</p>
-        <p>We apply a consistent rubric with full audit logs. Every result links back to artifacts.</p>
-        <p>This is the foundation for defensible hiring decisions—you can show exactly why you made each call.</p>
+        <p>Once you've built your Company Model, it surfaces what you're missing:</p>
+        <ul className="list-disc pl-4 space-y-1 text-zinc-700">
+          <li>"We ship fast but quality is slipping" → Gap identified</li>
+          <li>"Need someone to own ambiguous projects" → Role spec generated</li>
+          <li>"Lack strong test discipline" → Benchmark to detect it</li>
+        </ul>
+        <p>Then you can search: "Show me candidates who proved testing depth and debugging ability"—not match percentages, but verified claims.</p>
       </div>
     ),
   },
@@ -101,7 +112,7 @@ export function FAQ() {
                 Frequently Asked Questions
               </h2>
               <p className="text-lg text-zinc-500">
-                Common questions about hiring with Agencity.
+                Common questions about the Company Model and how Agencity works.
               </p>
             </div>
           </div>

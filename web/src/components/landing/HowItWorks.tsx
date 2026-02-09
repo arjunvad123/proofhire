@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Settings, Code, FileCheck, ChevronDown } from "lucide-react";
+import { Cpu, Code, FileCheck, ChevronDown, Target, BarChart3 } from "lucide-react";
 
 interface Step {
   number: string;
@@ -20,56 +20,59 @@ export function HowItWorks() {
   const steps: Step[] = [
     {
       number: "01",
-      title: "Calibrate your bar",
-      description: "15-minute founder interview",
-      detail: "A short calibration creates your Company Operating Model: pace, quality bar, autonomy, and what 'good' means at your startup. No generic rubrics.",
-      icon: <Settings className="w-6 h-6" />,
+      title: "Build your Company Model",
+      description: "15-minute calibration",
+      detail: "Define your hiring bar: pace, quality, autonomy, what 'good' means here. Add 2-5 exemplar PRs or style guides (optional). The model generates calibrated benchmarks for your roles.",
+      icon: <Cpu className="w-6 h-6" />,
       visual: (
         <div className="space-y-4">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4">
-              <Settings className="w-8 h-8 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center mx-auto mb-4">
+              <Cpu className="w-8 h-8 text-white" />
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Company Operating Model</h3>
-            <p className="text-gray-400 text-sm">Your calibration defines the rubric</p>
+            <h3 className="text-xl font-semibold text-white mb-2">Company Model</h3>
+            <p className="text-gray-400 text-sm">Your bar, made executable</p>
           </div>
           <div className="space-y-3 max-w-xs mx-auto">
             <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
               <div className="flex justify-between items-center mb-2">
+                <span className="text-gray-400 text-xs">Quality Bar</span>
+                <span className="text-white text-xs font-medium">High</span>
+              </div>
+              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                <div className="h-full w-[85%] bg-emerald-500 rounded-full" />
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
+              <div className="flex justify-between items-center mb-2">
                 <span className="text-gray-400 text-xs">Pace</span>
-                <span className="text-white text-xs font-medium">High</span>
+                <span className="text-white text-xs font-medium">Fast</span>
               </div>
               <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div className="h-full w-4/5 bg-blue-500 rounded-full" />
+                <div className="h-full w-[75%] bg-blue-500 rounded-full" />
               </div>
             </div>
             <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
               <div className="flex justify-between items-center mb-2">
-                <span className="text-gray-400 text-xs">Quality bar</span>
+                <span className="text-gray-400 text-xs">Autonomy</span>
                 <span className="text-white text-xs font-medium">High</span>
               </div>
               <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div className="h-full w-[90%] bg-emerald-500 rounded-full" />
+                <div className="h-full w-[80%] bg-purple-500 rounded-full" />
               </div>
             </div>
-            <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-gray-400 text-xs">Autonomy expected</span>
-                <span className="text-white text-xs font-medium">Medium</span>
-              </div>
-              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div className="h-full w-3/5 bg-amber-500 rounded-full" />
-              </div>
-            </div>
+          </div>
+          <div className="text-center pt-2">
+            <p className="text-gray-500 text-xs">→ Benchmarks generated: bugfix_v3, feature_slice, refactor</p>
           </div>
         </div>
       ),
     },
     {
       number: "02",
-      title: "Candidate completes real work",
-      description: "60-90 minute work sample",
-      detail: "Bugfix, feature slice, or refactor in a secure sandbox. We capture diffs, test logs, coverage, and writeups—automatically. AI tools configurable by company.",
+      title: "Candidates complete real work",
+      description: "60-90 minute benchmark",
+      detail: "Bugfix, feature slice, or refactor in a secure sandbox. Benchmarks are tuned to your Company Model. We capture diffs, test logs, coverage, and writeups automatically. AI tools configurable.",
       icon: <Code className="w-6 h-6" />,
       visual: (
         <div className="space-y-4">
@@ -77,8 +80,8 @@ export function HowItWorks() {
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
               <Code className="w-8 h-8 text-white" />
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Secure Sandbox</h3>
-            <p className="text-gray-400 text-sm">Real work, captured artifacts</p>
+            <h3 className="text-xl font-semibold text-white mb-2">Calibrated Benchmark</h3>
+            <p className="text-gray-400 text-sm">Tuned to your Company Model</p>
           </div>
           <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden max-w-sm mx-auto">
             <div className="flex items-center gap-2 px-3 py-2 bg-gray-900 border-b border-gray-700">
@@ -88,6 +91,7 @@ export function HowItWorks() {
                 <div className="w-2 h-2 rounded-full bg-green-500" />
               </div>
               <span className="text-gray-500 text-xs">rate_limiter.py</span>
+              <span className="ml-auto text-emerald-400 text-[10px]">bugfix_v3</span>
             </div>
             <div className="p-4 font-mono text-xs">
               <div className="text-gray-500">1  def check_rate_limit(user_id):</div>
@@ -106,41 +110,77 @@ export function HowItWorks() {
     },
     {
       number: "03",
-      title: "Review the Proof Brief",
+      title: "Proof engine evaluates",
+      description: "Fail-closed, evidence-bound",
+      detail: "The proof engine evaluates claims against your Company Model's evidence policy. PROVED claims link to artifacts. UNPROVED claims become interview questions. No guessing, no inference.",
+      icon: <Target className="w-6 h-6" />,
+      visual: (
+        <div className="space-y-4">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4">
+              <Target className="w-8 h-8 text-white" />
+            </div>
+            <h3 className="text-xl font-semibold text-white mb-2">Proof Engine</h3>
+            <p className="text-gray-400 text-sm">Evidence-bound evaluation</p>
+          </div>
+          <div className="max-w-sm mx-auto space-y-2">
+            <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-gray-300 text-sm flex-1">Correctness</span>
+              <span className="text-emerald-400 text-xs font-medium">tests pass → PROVED</span>
+            </div>
+            <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-gray-300 text-sm flex-1">Code Quality</span>
+              <span className="text-emerald-400 text-xs font-medium">diff review → PROVED</span>
+            </div>
+            <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="w-2 h-2 rounded-full bg-amber-500" />
+              <span className="text-gray-300 text-sm flex-1">Testing</span>
+              <span className="text-amber-400 text-xs font-medium">78% coverage → PARTIAL</span>
+            </div>
+            <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="w-2 h-2 rounded-full bg-gray-500" />
+              <span className="text-gray-300 text-sm flex-1">Communication</span>
+              <span className="text-gray-400 text-xs font-medium">no evidence → UNPROVED</span>
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      number: "04",
+      title: "Review Proof Brief + gap analysis",
       description: "5-8 minutes to decide",
-      detail: "A shareable 1-page decision packet: PROVED vs UNPROVED claims, evidence links, and a focused interview plan. Forward it to your co-founder.",
+      detail: "Get a shareable Proof Brief: proved claims with artifact links, unproved claims with interview questions, and gap analysis mapped to your Company Model. Forward to your co-founder.",
       icon: <FileCheck className="w-6 h-6" />,
       visual: (
         <div className="space-y-4">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center mx-auto mb-4">
-              <FileCheck className="w-8 h-8 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center mx-auto mb-4">
+              <BarChart3 className="w-8 h-8 text-white" />
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Proof Brief</h3>
-            <p className="text-gray-400 text-sm">Evidence-backed decision packet</p>
+            <h3 className="text-xl font-semibold text-white mb-2">Proof Brief + Gap Analysis</h3>
+            <p className="text-gray-400 text-sm">Decision support, not automation</p>
           </div>
           <div className="bg-gray-800 rounded-xl border border-gray-700 p-4 max-w-sm mx-auto">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                <span className="text-emerald-400 text-sm">Correctness</span>
-                <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded">PROVED</span>
+            <div className="space-y-2 mb-4">
+              <div className="flex items-center justify-between p-2 bg-emerald-500/10 border border-emerald-500/30 rounded">
+                <span className="text-emerald-400 text-sm">3 claims proved</span>
+                <span className="text-emerald-300 text-xs">→ artifacts linked</span>
               </div>
-              <div className="flex items-center justify-between p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                <span className="text-emerald-400 text-sm">Code Quality</span>
-                <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded">PROVED</span>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                <span className="text-amber-400 text-sm">Testing</span>
-                <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded">PARTIAL</span>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-gray-700/50 border border-gray-600 rounded-lg">
-                <span className="text-gray-400 text-sm">Communication</span>
-                <span className="text-[10px] font-bold text-gray-400 bg-gray-600 px-2 py-0.5 rounded">UNPROVED</span>
+              <div className="flex items-center justify-between p-2 bg-amber-500/10 border border-amber-500/30 rounded">
+                <span className="text-amber-400 text-sm">2 claims unproved</span>
+                <span className="text-amber-300 text-xs">→ interview Qs</span>
               </div>
             </div>
-            <div className="mt-4 pt-3 border-t border-gray-700">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Interview prompt</p>
-              <p className="text-xs text-gray-300">"Walk through your edge case handling..."</p>
+            <div className="border-t border-gray-700 pt-3">
+              <p className="text-gray-500 text-[10px] uppercase tracking-wide mb-2">Gap analysis</p>
+              <p className="text-gray-300 text-xs">"Testing discipline matches your gap. Communication needs live verification."</p>
+            </div>
+            <div className="border-t border-gray-700 pt-3 mt-3">
+              <p className="text-gray-500 text-[10px] uppercase tracking-wide mb-1">Interview focus (30 min)</p>
+              <p className="text-gray-300 text-xs">1. Walk through debugging approach...</p>
             </div>
           </div>
         </div>
@@ -156,7 +196,7 @@ export function HowItWorks() {
             How it works
           </h2>
           <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
-            From calibration to decision in three steps.
+            From Company Model to hiring decision in four steps.
           </p>
         </div>
 
@@ -220,7 +260,7 @@ export function HowItWorks() {
                 <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
                 <div className="w-3 h-3 rounded-full bg-green-500/80" />
               </div>
-              <div className="p-8 min-h-[400px] flex items-center justify-center">
+              <div className="p-8 min-h-[450px] flex items-center justify-center">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeStep}
