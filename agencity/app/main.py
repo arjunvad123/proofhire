@@ -68,9 +68,8 @@ async def health():
     return {
         "status": "healthy",
         "environment": settings.app_env,
-        "llm_configured": bool(settings.anthropic_api_key),
+        "llm_configured": bool(settings.openai_api_key),
         "github_configured": bool(settings.github_token),
-        "pdl_configured": bool(settings.pdl_api_key),
     }
 
 
