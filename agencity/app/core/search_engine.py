@@ -16,6 +16,8 @@ from app.models.evaluation import EvaluatedCandidate, Shortlist
 from app.sources.base import DataSource
 from app.sources.github import GitHubSource
 from app.sources.network import NetworkSource
+from app.sources.clado import CladoSource
+from app.sources.devpost import DevpostSource
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +39,12 @@ class SearchEngine:
         sources: list[DataSource] | None = None,
         evaluation_engine: EvaluationEngine | None = None,
     ):
-        # Default sources
+        # Default sources (in priority order)
         self.sources = sources or [
-            NetworkSource(),
-            GitHubSource(),
-            # TODO: Add DevpostSource, UniversityClubSource, etc.
+            NetworkSource(),      # P0: Our 6,000+ candidates
+            GitHubSource(),       # P1: GitHub developers
+            CladoSource(),        # P2: LinkedIn via Clado AI
+            DevpostSource(),      # P3: Hackathon participants
         ]
 
         # Sort by priority

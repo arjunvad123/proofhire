@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str = ""
 
+    # Clado AI (LinkedIn search)
+    clado_api_key: str = ""
+
     # Context Management (learned from OpenClaw)
     max_context_tokens: int = 100_000
     soft_trim_ratio: float = 0.3  # Trigger soft compression at 30%
