@@ -83,6 +83,21 @@ const faqs: FAQItem[] = [
     ),
   },
   {
+    question: "How does the 'reasoning engine' work?",
+    answer: (
+      <div className="space-y-3 text-sm">
+        <p>Most AI hiring tools do pattern matching: "resume has Python → +10 points." We train our model differently using <strong>actor-critic reinforcement learning</strong>.</p>
+        <p className="font-medium text-zinc-900">The model learns to reason through evaluations:</p>
+        <ul className="list-disc pl-4 space-y-1 text-zinc-700">
+          <li><strong>Actor</strong> — Proposes a reasoning chain: "This diff shows systematic debugging → test added → PROVED"</li>
+          <li><strong>Critic</strong> — Evaluates the reasoning: "Chain valid, but communication lacks artifact → UNPROVED"</li>
+          <li><strong>Training signal</strong> — Model improves at constructing valid proof chains, not just matching keywords</li>
+        </ul>
+        <p>The result: a model that reasons like your best hiring manager, not a keyword counter.</p>
+      </div>
+    ),
+  },
+  {
     question: "What about finding candidates who match our gaps?",
     answer: (
       <div className="space-y-3 text-sm">

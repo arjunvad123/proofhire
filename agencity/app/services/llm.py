@@ -1,14 +1,15 @@
 """
-LLM Service - Claude API wrapper.
+LLM Service - OpenAI API wrapper.
 
 Handles all LLM interactions with proper error handling,
 retries, and token management.
 """
 
+import json
 import logging
 from typing import Any
 
-import anthropic
+from openai import AsyncOpenAI
 
 from app.config import settings
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class LLMService:
     """
-    Wrapper for Claude API interactions.
+    Wrapper for OpenAI API interactions.
 
     Handles:
     - Token counting and limits
@@ -30,9 +31,9 @@ class LLMService:
         api_key: str | None = None,
         model: str | None = None,
     ):
-        self.api_key = api_key or settings.anthropic_api_key
+        self.api_key = api_key or settings.openai_api_key
         self.model = model or settings.default_model
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = AsyncOpenAI(api_key=self.api_key)
 
     async def complete(
         self,
@@ -42,7 +43,7 @@ class LLMService:
         temperature: float = 0.7,
     ) -> str:
         """
-        Get a completion from Claude.
+        Get a completion from OpenAI.
 
         Args:
             prompt: The user prompt
@@ -54,28 +55,24 @@ class LLMService:
             The model's response text
         """
         try:
-            messages = [{"role": "user", "content": prompt}]
-
-            kwargs: dict[str, Any] = {
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "messages": messages,
-                "temperature": temperature,
-            }
+            messages = []
 
             if system:
-                kwargs["system"] = system
+                messages.append({"role": "system", "content": system})
 
-            # Use sync client (we're in async context but Anthropic SDK handles it)
-            response = self.client.messages.create(**kwargs)
+            messages.append({"role": "user", "content": prompt})
 
-            return response.content[0].text
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
-        except anthropic.APIError as e:
-            logger.error(f"Claude API error: {e}")
-            raise
+            return response.choices[0].message.content or ""
+
         except Exception as e:
-            logger.error(f"Unexpected error in LLM service: {e}")
+            logger.error(f"OpenAI API error: {e}")
             raise
 
     async def complete_with_schema(
@@ -102,7 +99,7 @@ class LLMService:
 
 Respond with ONLY valid JSON matching this schema:
 ```json
-{schema}
+{json.dumps(schema, indent=2)}
 ```
 
 No markdown, no explanation, just the JSON object."""
@@ -115,14 +112,11 @@ No markdown, no explanation, just the JSON object."""
         )
 
         # Parse JSON from response
-        import json
-
         text = response.strip()
 
         # Handle markdown code blocks
         if text.startswith("```"):
             lines = text.split("\n")
-            # Find the actual JSON content
             start = 1 if lines[0].startswith("```") else 0
             end = len(lines) - 1 if lines[-1] == "```" else len(lines)
             text = "\n".join(lines[start:end])
@@ -131,9 +125,41 @@ No markdown, no explanation, just the JSON object."""
 
         return json.loads(text)
 
+    async def embed(self, text: str) -> list[float]:
+        """
+        Generate embeddings for text.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector
+        """
+        response = await self.client.embeddings.create(
+            model=settings.embedding_model,
+            input=text,
+        )
+        return response.data[0].embedding
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings for multiple texts.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        response = await self.client.embeddings.create(
+            model=settings.embedding_model,
+            input=texts,
+        )
+        return [item.embedding for item in response.data]
+
     def estimate_tokens(self, text: str) -> int:
         """
         Rough token estimation.
-        Claude uses ~4 chars per token for English.
+        GPT uses ~4 chars per token for English.
         """
         return len(text) // 4

@@ -1,31 +1,49 @@
 "use client";
 
-import { useState } from "react";
-import { useScroll, useTransform, motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { HowItWorks } from "./HowItWorks";
-import { FAQ } from "./FAQ";
-import { UniversityCarousel } from "./UniversityCarousel";
-import { ProofBriefModal } from "./ProofBriefModal";
-import { Check, Shield, FileCheck, Clock, ArrowRight, X, Cpu, Target, Zap, Search, BarChart3 } from "lucide-react";
+import { ArrowRight, Cpu, Check, Send, Users, Zap, Search, ChevronDown, X, Target, MapPin, Github, BookOpen, Trophy, Loader2, MessageSquare } from "lucide-react";
+
+// Demo conversation flow
+const demoConversations: Record<string, { question: string; options?: string[] }[]> = {
+  default: [
+    { question: "What role are you hiring for?", options: ["Prompt engineer", "Backend engineer", "Hardware engineer", "Something else"] },
+  ],
+  "prompt engineer": [
+    { question: "Got it. What does your startup do, and what will this person actually be working on?" },
+    { question: "Helpful. A few more questions:\n\n• Is this more research-y or production-focused?\n• What would success look like by day 60?\n• Any past hires or interviews that went well—or didn't?" },
+    { question: "Last one: Any location/school preferences or constraints?" },
+  ],
+  "backend engineer": [
+    { question: "Got it. What does your startup do, and what kind of backend work?" },
+    { question: "Helpful. A few more questions:\n\n• What's the scale you're building for?\n• Any specific tech stack requirements?\n• What would success look like by day 60?" },
+    { question: "Last one: Any location/school preferences or constraints?" },
+  ],
+  "hardware engineer": [
+    { question: "Got it. What kind of hardware—embedded, RF, mechanical, PCB?" },
+    { question: "Helpful. A few more questions:\n\n• Prototype stage or production/manufacturing?\n• Any compliance requirements (FCC, UL, etc.)?\n• What would success look like by day 60?" },
+    { question: "Last one: Any location/school preferences or constraints?" },
+  ],
+};
 
 export function AgencityLandingPage() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showProofBriefModal, setShowProofBriefModal] = useState(false);
   const [email, setEmail] = useState("");
-  const [userType, setUserType] = useState<"founder" | "candidate">("founder");
 
-  // Header Scroll Effects
-  const { scrollY } = useScroll();
-  const headerOpacity = useTransform(scrollY, [0, 200], [1, 0.95]);
-  const headerScale = useTransform(scrollY, [0, 200], [1, 0.98]);
+  // Demo state
+  const [demoStarted, setDemoStarted] = useState(false);
+  const [demoStep, setDemoStep] = useState(0);
+  const [demoPath, setDemoPath] = useState("default");
+  const [demoMessages, setDemoMessages] = useState<{ role: "agent" | "user"; content: string }[]>([]);
+  const [userInput, setUserInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [searchingStep, setSearchingStep] = useState(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const currentYear = new Date().getFullYear();
-
-  const handleGetStarted = () => {
-    document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });
-  };
+  // FAQ state
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   const handleSubmitWaitlist = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,669 +51,796 @@ export function AgencityLandingPage() {
     setEmail("");
   };
 
-  return (
-    <div className="min-h-screen bg-white font-sans text-zinc-900 selection:bg-indigo-100 selection:text-indigo-900">
-      {/* Floating Header */}
-      <motion.header
-        className="fixed top-6 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none"
-        initial={{ y: -100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-      >
-        <motion.div
-          className="pointer-events-auto w-full max-w-3xl bg-[#121212]/70 backdrop-blur-2xl border border-white/10 rounded-full px-5 py-3 flex items-center justify-between shadow-2xl transition-all duration-300 relative overflow-hidden"
-          style={{
-            boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.37)",
-            opacity: headerOpacity,
-            scale: headerScale,
-          }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent pointer-events-none skew-x-12" />
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
-          <Link href="/" className="flex items-center gap-3 pl-2 transition-opacity hover:opacity-80 relative z-10">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center">
-              <Cpu className="w-4 h-4 text-white" />
+  useEffect(() => {
+    scrollToBottom();
+  }, [demoMessages]);
+
+  const startDemo = () => {
+    setDemoStarted(true);
+    setDemoStep(0);
+    setDemoPath("default");
+    setDemoMessages([]);
+    setShowResults(false);
+    setSearchingStep(0);
+
+    // Add first agent message
+    setTimeout(() => {
+      setDemoMessages([{ role: "agent", content: "What role are you hiring for?" }]);
+    }, 500);
+  };
+
+  const handleDemoOption = (option: string) => {
+    const lowerOption = option.toLowerCase();
+    setDemoMessages(prev => [...prev, { role: "user", content: option }]);
+
+    if (demoPath === "default") {
+      // Set the conversation path based on selection
+      const path = lowerOption.includes("prompt") ? "prompt engineer" :
+                   lowerOption.includes("backend") ? "backend engineer" :
+                   lowerOption.includes("hardware") ? "hardware engineer" : "prompt engineer";
+      setDemoPath(path);
+      setDemoStep(0);
+
+      // Add next agent question after delay
+      setIsTyping(true);
+      setTimeout(() => {
+        setIsTyping(false);
+        const questions = demoConversations[path];
+        if (questions && questions[0]) {
+          setDemoMessages(prev => [...prev, { role: "agent", content: questions[0].question }]);
+        }
+      }, 1000);
+    }
+  };
+
+  const handleDemoSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userInput.trim()) return;
+
+    setDemoMessages(prev => [...prev, { role: "user", content: userInput }]);
+    setUserInput("");
+
+    const questions = demoConversations[demoPath];
+    const nextStep = demoStep + 1;
+
+    if (nextStep < questions.length) {
+      setIsTyping(true);
+      setTimeout(() => {
+        setIsTyping(false);
+        setDemoMessages(prev => [...prev, { role: "agent", content: questions[nextStep].question }]);
+        setDemoStep(nextStep);
+      }, 1200);
+    } else {
+      // Start searching animation
+      setIsTyping(true);
+      setTimeout(() => {
+        setIsTyping(false);
+        setDemoMessages(prev => [...prev, { role: "agent", content: "Got it. I have enough context. Let me search..." }]);
+
+        // Animate through search steps
+        const searchSteps = [1, 2, 3, 4, 5, 6];
+        searchSteps.forEach((step, index) => {
+          setTimeout(() => {
+            setSearchingStep(step);
+            if (step === 6) {
+              setTimeout(() => setShowResults(true), 800);
+            }
+          }, 600 * (index + 1));
+        });
+      }, 800);
+    }
+  };
+
+  const searchSources = [
+    { name: "Our network (6,000+)", icon: Users },
+    { name: "University clubs & orgs", icon: BookOpen },
+    { name: "GitHub activity", icon: Github },
+    { name: "Hackathon participants", icon: Trophy },
+    { name: "Course signals", icon: BookOpen },
+    { name: "Referral network", icon: Users },
+  ];
+
+  const sampleCandidates = [
+    {
+      name: "Maya Patel",
+      tagline: "UCSD · CS Junior",
+      knownFacts: [
+        "UCSD Computer Science, Class of 2026",
+        "Member of Triton AI club",
+        "Took CSE 151B (ML), CSE 150A (AI)",
+      ],
+      observedSignals: [
+        "GitHub: 2 ML projects, 1 with LLM API calls",
+        "SD Hacks: Built chatbot project (won category prize)",
+        "Active: 47 commits in last 3 months",
+      ],
+      unknown: [
+        "Actual prompt engineering depth",
+        "Shipping speed / work style",
+        "Interest in early-stage startup",
+      ],
+      whyConsider: "Local (UCSD), ML background, active builder, has touched LLM APIs",
+      nextStep: "Coffee chat: ask about her hackathon project and interest in startups",
+    },
+    {
+      name: "James Chen",
+      tagline: "UCSD · CS Senior",
+      knownFacts: [
+        "UCSD Computer Science, Class of 2025",
+        "Research assistant in NLP lab",
+        "Published paper on few-shot learning",
+      ],
+      observedSignals: [
+        "GitHub: Fine-tuning experiments, prompt optimization repo",
+        "TA for CSE 256 (NLP course)",
+        "Contributor to open-source LLM project",
+      ],
+      unknown: [
+        "Production experience (mostly research)",
+        "Startup pace tolerance",
+        "Availability timeline",
+      ],
+      whyConsider: "Deep NLP knowledge, has optimized prompts for research, local",
+      nextStep: "Ask about production vs research preference, graduation plans",
+    },
+    {
+      name: "Sofia Rodriguez",
+      tagline: "UCSD · Data Science Junior",
+      knownFacts: [
+        "UCSD Data Science, Class of 2026",
+        "The Basement (UCSD incubator) participant",
+        "Built side project with GPT API",
+      ],
+      observedSignals: [
+        "Shipped 2 side projects in last year",
+        "Active in startup community events",
+        "GitHub shows iteration speed (many commits)",
+      ],
+      unknown: [
+        "Technical depth on prompts/evals",
+        "ML fundamentals",
+        "Team collaboration style",
+      ],
+      whyConsider: "Startup-minded, ships fast, already in founder community",
+      nextStep: "Ask about her side projects, what she'd want to learn",
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-white text-zinc-900 font-sans">
+      {/* Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-100">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center">
+              <Cpu className="w-5 h-5 text-white" />
             </div>
-            <span className="text-lg font-bold text-white tracking-tight">Agencity</span>
+            <span className="text-xl font-bold text-zinc-900">Agencity</span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-6 relative z-10">
-            <a href="#company-model" className="text-sm font-medium text-white/70 hover:text-white transition-colors">Company Model</a>
-            <a href="#how-it-works" className="text-sm font-medium text-white/70 hover:text-white transition-colors">How it works</a>
-            <a href="#trust" className="text-sm font-medium text-white/70 hover:text-white transition-colors">Trust</a>
-            <a href="#faq" className="text-sm font-medium text-white/70 hover:text-white transition-colors">FAQ</a>
+          <nav className="hidden md:flex items-center gap-8">
+            <a href="#problem" className="text-sm text-zinc-600 hover:text-zinc-900 transition-colors">Problem</a>
+            <a href="#how-it-works" className="text-sm text-zinc-600 hover:text-zinc-900 transition-colors">How it works</a>
+            <a href="#demo" className="text-sm text-zinc-600 hover:text-zinc-900 transition-colors">Try it</a>
           </nav>
 
-          <div className="flex items-center gap-3 pr-1 relative z-10">
+          <Button
+            onClick={() => document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" })}
+            className="bg-zinc-900 text-white font-medium px-5 py-2 rounded-full hover:bg-zinc-800 transition-colors"
+          >
+            Request Access
+          </Button>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="min-h-screen flex flex-col items-center justify-center text-center px-6 pt-20">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="max-w-4xl"
+        >
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6 text-zinc-900 tracking-tight">
+            Find the people
+            <br />
+            <span className="text-emerald-600">you can't search for.</span>
+          </h1>
+
+          <p className="text-xl md:text-2xl text-zinc-600 mb-6 max-w-2xl mx-auto leading-relaxed">
+            Tell us what you need—even if it's vague. We'll find candidates others miss, and tell you honestly what we know vs. what you'll need to verify.
+          </p>
+
+          <p className="text-sm text-zinc-500 mb-10">
+            Built for early-stage founders who don't have time to source.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button
-              onClick={handleGetStarted}
-              className="rounded-full px-5 sm:px-6 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-black bg-white hover:bg-gray-100 transition-all duration-300 transform hover:scale-105"
+              onClick={() => document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" })}
+              className="bg-zinc-900 text-white font-semibold px-8 py-4 rounded-full text-lg hover:bg-zinc-800 transition-colors"
+            >
+              Try the Demo
+              <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Button
+              onClick={() => document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" })}
+              variant="outline"
+              className="border-zinc-300 text-zinc-900 px-8 py-4 rounded-full text-lg hover:bg-zinc-50 transition-colors"
             >
               Request Access
             </Button>
+          </div>
 
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 text-white hover:bg-white/10 rounded-full transition-colors relative z-10"
-              aria-label="Toggle menu"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {mobileMenuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
-            </button>
+          <div className="mt-12 text-sm text-zinc-500">
+            6,000+ candidates in our network
           </div>
         </motion.div>
 
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="pointer-events-auto absolute top-[80px] w-[90%] max-w-md bg-[#000000]/90 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-2xl p-4 md:hidden z-50"
-            >
-              <div className="space-y-1 relative z-10">
-                <a href="#company-model" onClick={() => setMobileMenuOpen(false)} className="block px-4 py-3 text-base font-medium text-white/80 hover:bg-white/10 hover:text-white rounded-xl transition-colors">Company Model</a>
-                <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block px-4 py-3 text-base font-medium text-white/80 hover:bg-white/10 hover:text-white rounded-xl transition-colors">How it works</a>
-                <a href="#trust" onClick={() => setMobileMenuOpen(false)} className="block px-4 py-3 text-base font-medium text-white/80 hover:bg-white/10 hover:text-white rounded-xl transition-colors">Trust</a>
-                <a href="#faq" onClick={() => setMobileMenuOpen(false)} className="block px-4 py-3 text-base font-medium text-white/80 hover:bg-white/10 hover:text-white rounded-xl transition-colors">FAQ</a>
-                <div className="border-t border-white/10 my-3"></div>
-                <button onClick={() => { handleGetStarted(); setMobileMenuOpen(false); }} className="w-full px-4 py-4 mt-2 text-base font-bold text-black bg-white hover:bg-gray-100 rounded-xl transition-all shadow-lg">
-                  Request Access
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.header>
-
-      {/* Hero Section - Company Model Focus */}
-      <section className="relative pt-32 pb-16 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-white z-0" />
-
-        <div className="relative z-10 mx-auto max-w-6xl px-4">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
-            {/* Left: Copy */}
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium mb-6">
-                <Cpu className="w-4 h-4" />
-                Your Company Model for Hiring
-              </div>
-
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold leading-tight tracking-tight text-zinc-900">
-                Make your hiring bar{" "}
-                <span className="text-emerald-600">executable.</span>
-              </h1>
-
-              <p className="mt-6 max-w-xl text-lg leading-relaxed text-zinc-600 md:text-xl">
-                Agencity builds a company-specific evaluation model that generates role-relevant benchmarks and produces Proof Briefs—what's proven, what isn't, and what to verify next.
-              </p>
-
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <button
-                  onClick={handleGetStarted}
-                  className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-6 py-3.5 text-sm font-semibold text-white hover:bg-zinc-800 transition-colors shadow-lg shadow-zinc-900/10"
-                >
-                  Build your Company Model
-                  <ArrowRight className="ml-2 w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setShowProofBriefModal(true)}
-                  className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-6 py-3.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-50 hover:border-zinc-300 transition-colors"
-                >
-                  See sample output
-                </button>
-              </div>
-
-              <div className="mt-8 flex items-center gap-6 text-sm text-zinc-500">
-                <div className="flex items-center gap-2">
-                  <Target className="w-4 h-4 text-emerald-600" />
-                  <span>Your bar, executable</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <FileCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Evidence-bound</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4 text-emerald-600" />
-                  <span>Gap analysis</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Company Model → Proof Brief Visual */}
-            <div className="relative">
-              <div className="absolute -inset-4 rounded-3xl bg-gradient-to-r from-emerald-500/10 via-blue-400/10 to-purple-500/10 blur-2xl" />
-
-              {/* Company Model Visual */}
-              <div className="relative space-y-4">
-                {/* Company Model Panel */}
-                <div className="rounded-2xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900 border-b border-zinc-700">
-                    <Cpu className="w-4 h-4 text-emerald-400" />
-                    <span className="text-sm font-medium text-white">Company Model</span>
-                    <span className="ml-auto text-xs text-zinc-400">Your hiring bar</span>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-zinc-600">Quality Bar</span>
-                        <span className="font-medium text-zinc-900">High</span>
-                      </div>
-                      <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
-                        <div className="h-full w-[85%] bg-emerald-500 rounded-full" />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-zinc-600">Pace</span>
-                        <span className="font-medium text-zinc-900">Fast</span>
-                      </div>
-                      <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
-                        <div className="h-full w-[75%] bg-blue-500 rounded-full" />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-zinc-600">Autonomy</span>
-                        <span className="font-medium text-zinc-900">High</span>
-                      </div>
-                      <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
-                        <div className="h-full w-[80%] bg-purple-500 rounded-full" />
-                      </div>
-                    </div>
-                    <div className="pt-2 border-t border-zinc-100">
-                      <p className="text-xs text-zinc-500">Benchmarks generated:</p>
-                      <div className="flex gap-2 mt-1">
-                        <span className="px-2 py-0.5 bg-zinc-100 rounded text-xs">bugfix_v3</span>
-                        <span className="px-2 py-0.5 bg-zinc-100 rounded text-xs">feature_slice</span>
-                        <span className="px-2 py-0.5 bg-zinc-100 rounded text-xs">refactor</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Arrow */}
-                <div className="flex justify-center">
-                  <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center">
-                    <ArrowRight className="w-4 h-4 text-zinc-400 rotate-90" />
-                  </div>
-                </div>
-
-                {/* Proof Brief Output */}
-                <div
-                  className="rounded-2xl border border-zinc-200 bg-white shadow-lg overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
-                  onClick={() => setShowProofBriefModal(true)}
-                >
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border-b border-emerald-100">
-                    <FileCheck className="w-4 h-4 text-emerald-600" />
-                    <span className="text-sm font-medium text-emerald-900">Proof Brief Output</span>
-                  </div>
-                  <div className="p-4 space-y-2">
-                    <div className="flex items-center justify-between p-2 rounded bg-emerald-50 border border-emerald-100">
-                      <span className="text-xs text-emerald-800">Correctness</span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">PROVED</span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-emerald-50 border border-emerald-100">
-                      <span className="text-xs text-emerald-800">Code Quality</span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">PROVED</span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-amber-50 border border-amber-100">
-                      <span className="text-xs text-amber-800">Testing</span>
-                      <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">PARTIAL</span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 rounded bg-zinc-50 border border-zinc-200">
-                      <span className="text-xs text-zinc-600">Communication</span>
-                      <span className="text-[10px] font-bold text-zinc-500 bg-zinc-200 px-1.5 py-0.5 rounded">UNPROVED</span>
-                    </div>
-                    <p className="text-[10px] text-zinc-400 text-center pt-1">Click to view full brief with interview plan</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+        <motion.div
+          className="absolute bottom-10"
+          animate={{ y: [0, 10, 0] }}
+          transition={{ repeat: Infinity, duration: 2 }}
+        >
+          <div className="w-6 h-10 border-2 border-zinc-300 rounded-full flex justify-center pt-2">
+            <div className="w-1.5 h-3 bg-zinc-400 rounded-full" />
           </div>
-        </div>
+        </motion.div>
       </section>
 
-      {/* University Carousel */}
-      <UniversityCarousel />
-
-      {/* What is the Company Model Section */}
-      <section id="company-model" className="py-20 px-4 bg-zinc-50">
+      {/* Problem Section */}
+      <section id="problem" className="py-24 px-6 bg-zinc-50 border-y border-zinc-100">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
-              The Company Model
+              The best candidates aren't searchable.
             </h2>
             <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
-              Not a vibe detector. Not "culture fit." An executable evaluator that generates benchmarks, evaluates evidence, and identifies gaps.
+              A brilliant CS junior at UCSD doesn't have a polished LinkedIn. They're in a club, have a sparse GitHub, and aren't "open to work."
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8">
-            {/* Benchmark Policy */}
-            <div className="bg-white rounded-2xl border border-zinc-200 p-6 shadow-sm">
-              <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mb-4">
-                <Target className="w-6 h-6 text-blue-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Benchmark Policy</h3>
-              <p className="text-sm text-zinc-600 mb-4">
-                What tasks to run, difficulty, timebox, allowed tools, and scoring dimensions—calibrated to your bar.
-              </p>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Task templates tuned to your stack</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Complexity knobs based on role level</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>AI tool policy configurable</span>
-                </div>
-              </div>
+          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-6">
+              <h3 className="font-semibold text-zinc-900 mb-4">What traditional search finds:</h3>
+              <ul className="space-y-3 text-zinc-600">
+                <li className="flex items-start gap-2">
+                  <X className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <span>People with optimized profiles</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <X className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <span>People actively job hunting</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <X className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <span>People who match keywords</span>
+                </li>
+              </ul>
             </div>
 
-            {/* Evidence Policy */}
-            <div className="bg-white rounded-2xl border border-zinc-200 p-6 shadow-sm">
-              <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center mb-4">
-                <FileCheck className="w-6 h-6 text-emerald-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Evidence Policy</h3>
-              <p className="text-sm text-zinc-600 mb-4">
-                What counts as proof, what is inadmissible, what must be verified live. Fail-closed by design.
-              </p>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Artifact-backed claims only</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>No inference, no guessing</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Every result links to evidence</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Decision Support */}
-            <div className="bg-white rounded-2xl border border-zinc-200 p-6 shadow-sm">
-              <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center mb-4">
-                <BarChart3 className="w-6 h-6 text-purple-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Decision Support</h3>
-              <p className="text-sm text-zinc-600 mb-4">
-                Gap analysis + interview plan. What remains unproved and exactly how to verify it.
-              </p>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Gaps mapped to your needs</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Generated interview questions</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span>Shareable Proof Brief</span>
-                </div>
-              </div>
+            <div className="bg-white rounded-2xl border border-emerald-200 p-6">
+              <h3 className="font-semibold text-zinc-900 mb-4">What you actually need:</h3>
+              <ul className="space-y-3 text-zinc-600">
+                <li className="flex items-start gap-2">
+                  <Check className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                  <span>People who could be great at this</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                  <span>People who aren't obviously visible</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Check className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                  <span>People worth a 30-minute conversation</span>
+                </li>
+              </ul>
             </div>
           </div>
 
-          {/* What it's NOT */}
-          <div className="mt-12 p-6 bg-zinc-100 rounded-2xl">
-            <h4 className="font-semibold text-zinc-900 mb-4 text-center">What the Company Model is NOT</h4>
-            <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="flex items-center gap-2 text-sm text-zinc-600">
-                <X className="w-4 h-4 text-red-500" />
-                <span>"AI decides who to hire"</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-600">
-                <X className="w-4 h-4 text-red-500" />
-                <span>A resume ranker</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-600">
-                <X className="w-4 h-4 text-red-500" />
-                <span>Personality inference</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-600">
-                <X className="w-4 h-4 text-red-500" />
-                <span>"Culture fit" detector</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Problem Statement */}
-      <section className="py-16 px-4 bg-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-12">
-            Every bad hire costs 6+ months of runway.
-          </h2>
-
-          <div className="grid md:grid-cols-3 gap-8 mb-12">
-            <div className="text-left">
-              <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center mb-4">
-                <X className="w-5 h-5 text-red-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Resumes are narrative</h3>
-              <p className="text-zinc-600 text-sm leading-relaxed">
-                "5 years of Python" says nothing about debugging intuition or code quality. Credentials don't equal capabilities.
-              </p>
-            </div>
-            <div className="text-left">
-              <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center mb-4">
-                <X className="w-5 h-5 text-red-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Interviews are noisy</h3>
-              <p className="text-zinc-600 text-sm leading-relaxed">
-                Different interviewers evaluate differently. Same candidate, different outcomes. No consistency.
-              </p>
-            </div>
-            <div className="text-left">
-              <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center mb-4">
-                <X className="w-5 h-5 text-red-600" />
-              </div>
-              <h3 className="font-semibold text-zinc-900 mb-2">Generic assessments miss context</h3>
-              <p className="text-zinc-600 text-sm leading-relaxed">
-                One-size-fits-all tests don't know your bar, your stack, or what "good" means at your company.
-              </p>
-            </div>
-          </div>
-
-          <p className="text-lg text-zinc-600">
-            <span className="font-semibold text-zinc-900">Agencity builds your bar into an executable model.</span> Benchmarks calibrated to you. Evidence-bound evaluation. Gap analysis that drives interviews.
+          <p className="text-center mt-12 text-zinc-500">
+            We search deeper, tell you what we found, and let you decide who to talk to.
           </p>
         </div>
       </section>
 
-      {/* How It Works */}
-      <HowItWorks />
-
-      {/* Gap Finding + Candidate Matching */}
-      <section className="py-20 px-4 bg-zinc-50">
+      {/* How It Works Section */}
+      <section id="how-it-works" className="py-24 px-6">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-12">
+          <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
-              From gaps to candidates
+              How it works
             </h2>
-            <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
-              Your Company Model identifies what you're missing. Then find candidates who've already proved it.
-            </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8">
-            {/* Gap Analysis */}
-            <div className="bg-white rounded-2xl border border-zinc-200 p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
-                  <BarChart3 className="w-5 h-5 text-amber-600" />
+          <div className="max-w-3xl mx-auto space-y-12">
+            {/* Step 1 */}
+            <div className="flex gap-6">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <MessageSquare className="w-6 h-6 text-emerald-700" />
                 </div>
-                <h3 className="font-semibold text-zinc-900">Gap Analysis</h3>
               </div>
-              <p className="text-sm text-zinc-600 mb-4">
-                Your Company Model surfaces what's missing from your team and what each role needs to prove.
-              </p>
-              <div className="space-y-2 p-4 bg-zinc-50 rounded-xl">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"We ship fast but quality is slipping"</span>
-                  <span className="text-amber-600 font-medium">→ Gap</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"Need someone to own ambiguous projects"</span>
-                  <span className="text-amber-600 font-medium">→ Gap</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"Lack strong test discipline"</span>
-                  <span className="text-amber-600 font-medium">→ Gap</span>
+              <div>
+                <h3 className="font-semibold text-zinc-900 text-xl mb-2">1. Tell us what you need</h3>
+                <p className="text-zinc-600 mb-4">
+                  Start vague: "I need a prompt engineer." We'll ask smart follow-up questions to understand what you actually mean.
+                </p>
+                <div className="bg-zinc-50 rounded-xl p-4 text-sm text-zinc-600">
+                  <p className="font-medium text-zinc-700 mb-2">We'll ask things like:</p>
+                  <ul className="space-y-1">
+                    <li>• What are you building?</li>
+                    <li>• What would success look like by day 60?</li>
+                    <li>• Any past hires that worked well—or didn't?</li>
+                    <li>• Location/school preferences?</li>
+                  </ul>
                 </div>
               </div>
             </div>
 
-            {/* Candidate Matching */}
-            <div className="bg-white rounded-2xl border border-zinc-200 p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
-                  <Search className="w-5 h-5 text-emerald-600" />
+            {/* Step 2 */}
+            <div className="flex gap-6">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Search className="w-6 h-6 text-emerald-700" />
                 </div>
-                <h3 className="font-semibold text-zinc-900">Candidate Matching</h3>
               </div>
-              <p className="text-sm text-zinc-600 mb-4">
-                Find candidates who've already proved the skills you need—not match percentages, but verified claims.
-              </p>
-              <div className="space-y-2 p-4 bg-zinc-50 rounded-xl">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"Show candidates who proved testing depth"</span>
-                  <span className="text-emerald-600 font-medium">→ 12 found</span>
+              <div>
+                <h3 className="font-semibold text-zinc-900 text-xl mb-2">2. We search deep</h3>
+                <p className="text-zinc-600 mb-4">
+                  Not just LinkedIn. We look at clubs, hackathons, GitHub activity, course signals, and our network to find people others miss.
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {searchSources.map((source, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm text-zinc-600 bg-zinc-50 rounded-lg px-3 py-2">
+                      <source.icon className="w-4 h-4 text-zinc-400" />
+                      <span>{source.name}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"Who handled ambiguous debugging tasks?"</span>
-                  <span className="text-emerald-600 font-medium">→ 8 found</span>
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div className="flex gap-6">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Target className="w-6 h-6 text-emerald-700" />
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-600">"Quality-focused with fast shipping"</span>
-                  <span className="text-emerald-600 font-medium">→ 5 found</span>
+              </div>
+              <div>
+                <h3 className="font-semibold text-zinc-900 text-xl mb-2">3. We tell you honestly what we know</h3>
+                <p className="text-zinc-600 mb-4">
+                  No fake "match scores." We show you: what we verified, what we observed, what's unknown, and what to ask them.
+                </p>
+                <div className="bg-zinc-50 rounded-xl p-4">
+                  <div className="grid md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="font-medium text-emerald-700 mb-1">Known facts</p>
+                      <p className="text-zinc-600">Verifiable: school, clubs, public projects</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-blue-700 mb-1">Observed signals</p>
+                      <p className="text-zinc-600">GitHub activity, hackathon wins, etc.</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-amber-700 mb-1">Unknown</p>
+                      <p className="text-zinc-600">What you'll need to verify in conversation</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-zinc-700 mb-1">Why consider + next step</p>
+                      <p className="text-zinc-600">Connection to your needs + what to ask</p>
+                    </div>
+                  </div>
                 </div>
+              </div>
+            </div>
+
+            {/* Step 4 */}
+            <div className="flex gap-6">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Users className="w-6 h-6 text-emerald-700" />
+                </div>
+              </div>
+              <div>
+                <h3 className="font-semibold text-zinc-900 text-xl mb-2">4. You decide who to talk to</h3>
+                <p className="text-zinc-600">
+                  We're not evaluating if someone IS great—we're finding people worth a 30-minute conversation. You make the call.
+                </p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Differentiation Table */}
-      <section className="py-20 px-4 bg-white">
-        <div className="max-w-4xl mx-auto">
+      {/* Demo Section */}
+      <section id="demo" className="py-24 px-6 bg-zinc-50 border-y border-zinc-100">
+        <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
-              Not another assessment tool.
+              Try it yourself
             </h2>
             <p className="text-lg text-zinc-600">
-              We build your evaluation model. They run generic tests.
+              See how the conversation works.
             </p>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-zinc-200">
-            <table className="w-full">
-              <thead className="bg-zinc-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-zinc-900"></th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-zinc-500">Generic Tools</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-zinc-900 bg-emerald-50">Agencity</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200">
-                <tr>
-                  <td className="px-6 py-4 text-sm font-medium text-zinc-900">Core product</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 text-center">Assessment platform</td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 text-center bg-emerald-50 font-medium">Company Model + Evaluation</td>
-                </tr>
-                <tr>
-                  <td className="px-6 py-4 text-sm font-medium text-zinc-900">Benchmarks</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 text-center">Generic puzzles</td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 text-center bg-emerald-50 font-medium">Calibrated to your bar</td>
-                </tr>
-                <tr>
-                  <td className="px-6 py-4 text-sm font-medium text-zinc-900">Output</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 text-center">Score (0-100)</td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 text-center bg-emerald-50 font-medium">Proof Brief + gap analysis</td>
-                </tr>
-                <tr>
-                  <td className="px-6 py-4 text-sm font-medium text-zinc-900">Learning</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 text-center">Static</td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 text-center bg-emerald-50 font-medium">Adapts from preferences</td>
-                </tr>
-                <tr>
-                  <td className="px-6 py-4 text-sm font-medium text-zinc-900">Gap finding</td>
-                  <td className="px-6 py-4 text-sm text-zinc-600 text-center">No</td>
-                  <td className="px-6 py-4 text-sm text-zinc-900 text-center bg-emerald-50 font-medium">Team + role gap analysis</td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-white rounded-2xl border border-zinc-200 shadow-lg overflow-hidden">
+              {/* Chat header */}
+              <div className="bg-zinc-900 text-white px-6 py-4 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
+                  <Cpu className="w-5 h-5 text-zinc-900" />
+                </div>
+                <span className="font-semibold">Agencity</span>
+              </div>
+
+              {/* Chat body */}
+              <div className="h-[400px] overflow-y-auto p-6 space-y-4">
+                {!demoStarted ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center">
+                    <p className="text-zinc-500 mb-6">Tell us what role you're hiring for,<br />and we'll show you how it works.</p>
+                    <Button
+                      onClick={startDemo}
+                      className="bg-emerald-600 text-white font-semibold px-6 py-3 rounded-full hover:bg-emerald-500 transition-colors"
+                    >
+                      Start Demo
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {demoMessages.map((msg, i) => (
+                      <div
+                        key={i}
+                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                            msg.role === "user"
+                              ? "bg-emerald-600 text-white"
+                              : "bg-zinc-100 text-zinc-900"
+                          }`}
+                        >
+                          <p className="whitespace-pre-line text-sm">{msg.content}</p>
+                        </div>
+                      </div>
+                    ))}
+
+                    {isTyping && (
+                      <div className="flex justify-start">
+                        <div className="bg-zinc-100 rounded-2xl px-4 py-3">
+                          <div className="flex gap-1">
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Search animation */}
+                    {searchingStep > 0 && !showResults && (
+                      <div className="bg-zinc-100 rounded-2xl p-4 space-y-2">
+                        <p className="text-sm font-medium text-zinc-700 mb-3">Searching...</p>
+                        {searchSources.map((source, i) => (
+                          <div
+                            key={i}
+                            className={`flex items-center gap-2 text-sm transition-opacity duration-300 ${
+                              i < searchingStep ? "opacity-100" : "opacity-30"
+                            }`}
+                          >
+                            {i < searchingStep ? (
+                              <Check className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
+                            )}
+                            <span className={i < searchingStep ? "text-zinc-700" : "text-zinc-400"}>
+                              {source.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Options for initial question */}
+                    {demoMessages.length === 1 && demoPath === "default" && !isTyping && (
+                      <div className="flex flex-wrap gap-2">
+                        {demoConversations.default[0].options?.map((option, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handleDemoOption(option)}
+                            className="px-4 py-2 bg-white border border-zinc-200 rounded-full text-sm text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300 transition-colors"
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                  </>
+                )}
+              </div>
+
+              {/* Input area */}
+              {demoStarted && !showResults && demoMessages.length > 1 && !isTyping && searchingStep === 0 && (
+                <form onSubmit={handleDemoSubmit} className="border-t border-zinc-200 p-4 flex gap-3">
+                  <input
+                    type="text"
+                    value={userInput}
+                    onChange={(e) => setUserInput(e.target.value)}
+                    placeholder="Type your answer..."
+                    className="flex-1 px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-full text-sm focus:outline-none focus:border-emerald-400 transition-colors"
+                  />
+                  <button
+                    type="submit"
+                    className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center text-white hover:bg-emerald-500 transition-colors"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+              )}
+
+              {/* Results */}
+              {showResults && (
+                <div className="border-t border-zinc-200 p-4">
+                  <p className="text-sm font-medium text-emerald-700 mb-2">Found 3 candidates worth talking to ↓</p>
+                </div>
+              )}
+            </div>
+
+            {/* Results cards */}
+            <AnimatePresence>
+              {showResults && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5 }}
+                  className="mt-6 space-y-4"
+                >
+                  {sampleCandidates.map((candidate, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, delay: i * 0.15 }}
+                      className="bg-white rounded-2xl border border-zinc-200 p-5 shadow-sm"
+                    >
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h4 className="font-semibold text-zinc-900">{candidate.name}</h4>
+                          <p className="text-sm text-zinc-500">{candidate.tagline}</p>
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded">
+                          Worth a conversation
+                        </span>
+                      </div>
+
+                      <div className="grid md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider mb-2">Known Facts</p>
+                          <ul className="space-y-1">
+                            {candidate.knownFacts.map((fact, j) => (
+                              <li key={j} className="text-sm text-zinc-600 flex items-start gap-1.5">
+                                <Check className="w-3.5 h-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                                {fact}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">Observed Signals</p>
+                          <ul className="space-y-1">
+                            {candidate.observedSignals.map((signal, j) => (
+                              <li key={j} className="text-sm text-zinc-600 flex items-start gap-1.5">
+                                <span className="text-blue-500">•</span>
+                                {signal}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <div className="mb-4">
+                        <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2">Unknown (verify in conversation)</p>
+                        <ul className="space-y-1">
+                          {candidate.unknown.map((item, j) => (
+                            <li key={j} className="text-sm text-zinc-500 flex items-start gap-1.5">
+                              <span className="text-amber-500">?</span>
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="bg-zinc-50 rounded-lg p-3 space-y-2">
+                        <div>
+                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Why consider</p>
+                          <p className="text-sm text-zinc-700">{candidate.whyConsider}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Suggested first step</p>
+                          <p className="text-sm text-zinc-700">{candidate.nextStep}</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+
+                  <div className="text-center pt-4">
+                    <Button
+                      onClick={() => {
+                        setDemoStarted(false);
+                        setShowResults(false);
+                        setDemoMessages([]);
+                        setSearchingStep(0);
+                        setDemoPath("default");
+                        setDemoStep(0);
+                      }}
+                      variant="outline"
+                      className="border-zinc-300 text-zinc-700"
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </section>
 
-      {/* Trust Section */}
-      <section id="trust" className="py-20 px-4 bg-zinc-900 text-white">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-4">
-            Evidence-bound. Auditable. Defensible.
-          </h2>
-          <p className="text-lg text-zinc-400 mb-12 max-w-2xl mx-auto">
-            The proof engine is the safety rail. No hidden signals. Every claim links to artifacts.
-          </p>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center mx-auto mb-4">
-                <Shield className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h3 className="font-semibold mb-2">Fail-closed evaluation</h3>
-              <p className="text-sm text-zinc-400">No proof = no claim. The model can only score over admissible evidence. No invented signals.</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center mx-auto mb-4">
-                <FileCheck className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h3 className="font-semibold mb-2">Consistent rubric + audit logs</h3>
-              <p className="text-sm text-zinc-400">Same criteria for every candidate. Full audit trail. Every result traceable to artifacts.</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center mx-auto mb-4">
-                <Zap className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h3 className="font-semibold mb-2">Adaptive, not black-box</h3>
-              <p className="text-sm text-zinc-400">Active evaluation chooses the next best benchmark to reduce uncertainty—transparently.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Dual-sided Section */}
-      <section className="py-20 px-4 bg-white">
+      {/* The Honest Approach Section */}
+      <section className="py-24 px-6">
         <div className="max-w-5xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="p-8 rounded-2xl border border-zinc-200 bg-zinc-50">
-              <h3 className="text-xl font-semibold text-zinc-900 mb-4">For startups</h3>
-              <p className="text-zinc-600 mb-6">
-                Build your hiring bar into an executable model. Generate calibrated benchmarks. Get gap analysis + interview plans. Find candidates who've proved what you need.
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
+              We're honest about what we know.
+            </h2>
+            <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
+              Most people don't have rich public profiles. We don't pretend otherwise.
+            </p>
+          </div>
+
+          <div className="max-w-3xl mx-auto">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-6 md:p-8">
+              <p className="text-zinc-700 mb-6 text-center">
+                We're not evaluating if someone <em>is</em> a great prompt engineer.<br />
+                We're finding people <strong>worth a 30-minute conversation</strong>.
               </p>
-              <button
-                onClick={handleGetStarted}
-                className="inline-flex items-center text-sm font-semibold text-zinc-900 hover:text-zinc-700"
-              >
-                Build your Company Model
-                <ArrowRight className="ml-2 w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-8 rounded-2xl border border-zinc-200 bg-zinc-50">
-              <h3 className="text-xl font-semibold text-zinc-900 mb-4">For candidates</h3>
-              <p className="text-zinc-600 mb-6">
-                Get hired for what you can do, not what you claim. Complete evaluations, build a proof profile, and match to companies where your skills are actually needed.
-              </p>
-              <button
-                onClick={handleGetStarted}
-                className="inline-flex items-center text-sm font-semibold text-zinc-900 hover:text-zinc-700"
-              >
-                Join the talent network
-                <ArrowRight className="ml-2 w-4 h-4" />
-              </button>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+                  <h4 className="font-semibold text-red-800 mb-3">We don't say:</h4>
+                  <ul className="space-y-2 text-sm text-red-700">
+                    <li>• "92% match score"</li>
+                    <li>• "Strong prompt engineering skills"</li>
+                    <li>• "Great culture fit"</li>
+                    <li>• Claims we can't verify</li>
+                  </ul>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5">
+                  <h4 className="font-semibold text-emerald-800 mb-3">We do say:</h4>
+                  <ul className="space-y-2 text-sm text-emerald-700">
+                    <li>• "Has 2 LLM projects on GitHub"</li>
+                    <li>• "Won hackathon with chatbot"</li>
+                    <li>• "Skill level unknown—ask about X"</li>
+                    <li>• Facts + signals + unknowns</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* FAQ */}
-      <section id="faq">
-        <FAQ />
+      <section className="py-24 px-6 bg-zinc-50 border-y border-zinc-100">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
+              FAQ
+            </h2>
+          </div>
+
+          <div className="space-y-4">
+            {[
+              {
+                q: "Where do candidates come from?",
+                a: "Our 6,000+ opted-in network, plus deep searches across GitHub, university clubs, hackathons, and other signals. We'll tell you exactly where we found each person.",
+              },
+              {
+                q: "How is this different from LinkedIn search?",
+                a: "LinkedIn finds people with optimized profiles. We find people who could be great but aren't obviously visible—based on activity signals, not keywords.",
+              },
+              {
+                q: "What if I don't know exactly what I need?",
+                a: "That's the point. Start vague ('I need a prompt engineer') and we'll ask clarifying questions until we understand what you actually mean.",
+              },
+              {
+                q: "How fast do I get candidates?",
+                a: "Usually within 24-72 hours after we understand what you're looking for.",
+              },
+              {
+                q: "What if the candidates aren't good?",
+                a: "We show you why we surfaced each person. If our signals were wrong, tell us—we learn from your feedback and improve.",
+              },
+            ].map((item, i) => (
+              <div
+                key={i}
+                className="bg-white rounded-xl border border-zinc-200 overflow-hidden"
+              >
+                <button
+                  onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                  className="w-full flex items-center justify-between p-5 text-left"
+                >
+                  <span className="font-medium text-zinc-900">{item.q}</span>
+                  <ChevronDown
+                    className={`w-5 h-5 text-zinc-400 transition-transform ${
+                      openFaq === i ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                {openFaq === i && (
+                  <div className="px-5 pb-5 pt-0">
+                    <p className="text-zinc-600">{item.a}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
-      {/* Final CTA / Waitlist */}
-      <section id="waitlist" className="py-20 px-4 bg-zinc-50">
+      {/* CTA */}
+      <section id="waitlist" className="py-24 px-6 bg-zinc-900 text-white">
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
-            Make your hiring bar executable.
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
+            Find the people you can't search for.
           </h2>
-          <p className="text-lg text-zinc-600 mb-8">
-            Build your Company Model. Generate calibrated benchmarks. Hire with proof.
+          <p className="text-zinc-400 mb-8">
+            Tell us what you need. We'll find candidates worth talking to.
           </p>
 
-          <form onSubmit={handleSubmitWaitlist} className="max-w-md mx-auto">
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                required
-                className="flex-1 px-4 py-3 rounded-xl border border-zinc-300 focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900 outline-none transition-colors"
-              />
-              <button
+          <form onSubmit={handleSubmitWaitlist} className="space-y-4">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              required
+              className="w-full max-w-md px-5 py-4 bg-white/10 border border-white/20 rounded-xl text-white placeholder:text-zinc-500 focus:border-emerald-400 focus:outline-none transition-colors"
+            />
+            <div>
+              <Button
                 type="submit"
-                className="px-6 py-3 rounded-xl bg-zinc-900 text-white font-semibold hover:bg-zinc-800 transition-colors"
+                className="bg-emerald-600 text-white font-semibold px-8 py-4 rounded-xl hover:bg-emerald-500 transition-colors"
               >
                 Request Access
-              </button>
-            </div>
-            <div className="flex items-center justify-center gap-4 text-sm">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="userType"
-                  checked={userType === "founder"}
-                  onChange={() => setUserType("founder")}
-                  className="w-4 h-4 text-zinc-900"
-                />
-                <span className="text-zinc-600">I'm a founder</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="userType"
-                  checked={userType === "candidate"}
-                  onChange={() => setUserType("candidate")}
-                  className="w-4 h-4 text-zinc-900"
-                />
-                <span className="text-zinc-600">I'm a candidate</span>
-              </label>
+              </Button>
             </div>
           </form>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-200 bg-white">
-        <div className="mx-auto max-w-6xl px-4 py-10">
-          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-            <div>
-              <p className="text-sm font-semibold text-zinc-900">Agencity</p>
-              <p className="mt-1 text-sm text-zinc-500">Your Company Model for hiring.</p>
+      <footer className="py-8 px-6 border-t border-zinc-100 bg-white">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-6 h-6 rounded bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center">
+              <Cpu className="w-4 h-4 text-white" />
             </div>
-            <div className="flex gap-5 text-sm text-zinc-500">
-              <a href="#company-model" className="hover:text-zinc-900 transition-colors">Company Model</a>
-              <a href="#how-it-works" className="hover:text-zinc-900 transition-colors">How it works</a>
-              <a href="#faq" className="hover:text-zinc-900 transition-colors">FAQ</a>
-            </div>
+            <span className="font-semibold text-zinc-900">Agencity</span>
           </div>
-          <p className="mt-8 text-xs text-zinc-400">&copy; {currentYear} Agencity. All rights reserved.</p>
+          <p className="text-zinc-500 text-sm">
+            © {new Date().getFullYear()} Agencity. All rights reserved.
+          </p>
         </div>
       </footer>
-
-      {/* Proof Brief Modal */}
-      <ProofBriefModal open={showProofBriefModal} onClose={() => setShowProofBriefModal(false)} />
     </div>
   );
 }

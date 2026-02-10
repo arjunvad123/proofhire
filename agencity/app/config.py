@@ -18,14 +18,12 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # LLM
-    anthropic_api_key: str = ""
-    default_model: str = "claude-sonnet-4-20250514"
-
-    # Embeddings (Voyage AI or OpenAI)
-    embedding_provider: str = "openai"  # "voyage" or "openai"
+    # LLM (OpenAI)
     openai_api_key: str = ""
-    voyage_api_key: str = ""
+    default_model: str = "gpt-4o"  # or "gpt-4o-mini" for faster/cheaper
+
+    # Embeddings
+    embedding_model: str = "text-embedding-3-small"
 
     # People Data Labs
     pdl_api_key: str = ""
