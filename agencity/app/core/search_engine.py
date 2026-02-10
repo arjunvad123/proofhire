@@ -14,10 +14,15 @@ from app.models.blueprint import RoleBlueprint
 from app.models.candidate import CandidateData
 from app.models.evaluation import EvaluatedCandidate, Shortlist
 from app.sources.base import DataSource
-from app.sources.github import GitHubSource
 from app.sources.network import NetworkSource
+from app.sources.github import GitHubSource
 from app.sources.clado import CladoSource
+from app.sources.pearch import PearchSource
 from app.sources.devpost import DevpostSource
+from app.sources.codeforces import CodeforcesSource
+from app.sources.stackoverflow import StackOverflowSource
+from app.sources.hackernews import HackerNewsSource
+from app.sources.producthunt import ProductHuntSource
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +46,15 @@ class SearchEngine:
     ):
         # Default sources (in priority order)
         self.sources = sources or [
-            NetworkSource(),      # P0: Our 6,000+ candidates
-            GitHubSource(),       # P1: GitHub developers
-            CladoSource(),        # P2: LinkedIn via Clado AI
-            DevpostSource(),      # P3: Hackathon participants
+            NetworkSource(),       # P0: Our 6,000+ candidates
+            GitHubSource(),        # P1: GitHub developers (100M+)
+            CladoSource(),         # P2: LinkedIn via Clado (800M+)
+            PearchSource(),        # P3: LinkedIn via Pearch (alternative)
+            DevpostSource(),       # P4: Hackathon participants (2M+)
+            CodeforcesSource(),    # P5: Competitive programmers (600K+)
+            StackOverflowSource(), # P6: SO top contributors
+            HackerNewsSource(),    # P7: Active job seekers
+            ProductHuntSource(),   # P8: Makers and builders
         ]
 
         # Sort by priority
