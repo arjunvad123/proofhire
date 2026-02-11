@@ -64,7 +64,16 @@ Candidates are ranked based on:
 
 ## Quick Start
 
-### Backend
+### 1. Set up Supabase Tables
+
+Run the SQL schema to create the required tables:
+
+```bash
+# Go to your Supabase SQL Editor and run:
+cat supabase/schema.sql
+```
+
+### 2. Backend
 
 ```bash
 cd agencity
@@ -72,22 +81,17 @@ cd agencity
 # Install dependencies
 pip install -e .
 
-# Copy environment file
+# Copy environment file and add your keys
 cp .env.example .env
-
-# Add your API keys to .env:
-# - ANTHROPIC_API_KEY (required)
-# - GITHUB_TOKEN (optional)
-# - SUPABASE_URL and SUPABASE_KEY (for real candidate data)
 
 # Run the server
 uvicorn app.main:app --reload --port 8001
 ```
 
-### Frontend
+### 3. Frontend
 
 ```bash
-cd ../web
+cd web
 
 # Install dependencies
 npm install
@@ -96,7 +100,22 @@ npm install
 npm run dev
 ```
 
-Visit `http://localhost:3000/agencity` for the polished demo.
+Visit `http://localhost:3000` for the landing page, or `http://localhost:3000/onboarding` to start the onboarding flow.
+
+## Onboarding Flow (Stage 0 & 1)
+
+The new onboarding wizard collects:
+
+1. **Company Info** - Name, stage, tech stack, founder details
+2. **UMO (Unique Mandate Objective)** - What kind of candidates you're looking for
+3. **Roles** - Specific positions you're hiring for
+4. **LinkedIn Import** - Upload your Connections.csv to import your network
+5. **Database Import** - Import your existing candidate database
+
+Each company gets:
+- Isolated data namespace in Pinecone
+- Automatic entity resolution (dedupes people across imports)
+- Rich profiles ready for semantic search
 
 ## API Endpoints
 

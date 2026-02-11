@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     slack_client_secret: str = ""  # For OAuth install flow
     slack_redirect_uri: str = ""  # OAuth redirect URI
 
+    # Pinecone (Vector Search)
+    pinecone_api_key: str = ""
+    pinecone_index_name: str = "agencity-people"
+    pinecone_environment: str = "us-east-1"  # or your region
+
+    # Perplexity (Enrichment)
+    perplexity_api_key: str = ""
+
+    # Google Custom Search Engine
+    google_cse_api_key: str = ""
+    google_cse_id: str = ""  # Custom Search Engine ID
+
     # Context Management (learned from OpenClaw)
     max_context_tokens: int = 100_000
     soft_trim_ratio: float = 0.3  # Trigger soft compression at 30%
