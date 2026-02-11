@@ -6,14 +6,35 @@ import {
   getTimingAlerts,
   getLayoffExposure,
   getNetworkStats,
-  type TimingAnalysis,
   type LayoffExposure,
   type NetworkStats,
 } from '@/lib/api';
 
+// Actual API response type
+interface TimingResponse {
+  total_scored: number;
+  by_urgency: {
+    immediate: { count: number; top_candidates: TimingCandidate[] };
+    high: { count: number; top_candidates: TimingCandidate[] };
+    medium: { count: number; top_candidates: TimingCandidate[] };
+    low: { count: number; top_candidates: TimingCandidate[] };
+  };
+  summary: Record<string, number>;
+}
+
+interface TimingCandidate {
+  id: string;
+  name: string;
+  title: string;
+  company: string;
+  linkedin_url: string;
+  readiness_score: number;
+  signals: string[];
+}
+
 export default function IntelligencePage() {
   const [companyId, setCompanyId] = useState<string | null>(null);
-  const [timingAlerts, setTimingAlerts] = useState<TimingAnalysis[]>([]);
+  const [timingData, setTimingData] = useState<TimingResponse | null>(null);
   const [layoffExposure, setLayoffExposure] = useState<LayoffExposure | null>(null);
   const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,12 +65,12 @@ export default function IntelligencePage() {
       setLoading(true);
       try {
         const [timing, layoffs, stats] = await Promise.all([
-          getTimingAlerts(companyId!).catch(() => []),
+          getTimingAlerts(companyId!).catch(() => null),
           getLayoffExposure(companyId!).catch(() => null),
           getNetworkStats(companyId!).catch(() => null),
         ]);
 
-        setTimingAlerts(timing);
+        setTimingData(timing as unknown as TimingResponse);
         setLayoffExposure(layoffs);
         setNetworkStats(stats);
       } catch (error) {
@@ -90,7 +111,7 @@ export default function IntelligencePage() {
             <div className="text-sm font-medium text-gray-500">Ready to Move</div>
           </div>
           <div className="text-3xl font-bold text-gray-900">
-            {timingAlerts.filter(a => a.readiness_score >= 0.7).length}
+            {(timingData?.by_urgency?.immediate?.count || 0) + (timingData?.by_urgency?.high?.count || 0)}
           </div>
           <div className="text-sm text-gray-500">high readiness candidates</div>
         </div>
@@ -129,7 +150,7 @@ export default function IntelligencePage() {
         <div className="border-b border-gray-200">
           <nav className="flex">
             {[
-              { id: 'timing', label: 'Timing Intelligence', count: timingAlerts.length },
+              { id: 'timing', label: 'Timing Intelligence', count: timingData?.total_scored || 0 },
               { id: 'layoffs', label: 'Layoff Exposure', count: layoffExposure?.affected_members || 0 },
               { id: 'overview', label: 'Network Overview', count: null },
             ].map((tab) => (
@@ -155,7 +176,7 @@ export default function IntelligencePage() {
 
         <div className="p-6">
           {activeTab === 'timing' && (
-            <TimingTab alerts={timingAlerts} />
+            <TimingTab data={timingData} />
           )}
           {activeTab === 'layoffs' && (
             <LayoffTab exposure={layoffExposure} />
@@ -170,11 +191,28 @@ export default function IntelligencePage() {
 }
 
 // Timing Tab Component
-function TimingTab({ alerts }: { alerts: TimingAnalysis[] }) {
-  if (alerts.length === 0) {
+function TimingTab({ data }: { data: TimingResponse | null }) {
+  if (!data || data.total_scored === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
         No timing signals detected yet. Import your network to see insights.
+      </div>
+    );
+  }
+
+  // Combine all candidates from all urgency levels
+  const allCandidates = [
+    ...(data.by_urgency?.immediate?.top_candidates || []),
+    ...(data.by_urgency?.high?.top_candidates || []),
+    ...(data.by_urgency?.medium?.top_candidates || []),
+    ...(data.by_urgency?.low?.top_candidates || []),
+  ];
+
+  if (allCandidates.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-500">
+        <p>Analyzed {data.total_scored} people in your network.</p>
+        <p className="mt-2">No high-readiness signals detected at this time.</p>
       </div>
     );
   }
@@ -183,14 +221,15 @@ function TimingTab({ alerts }: { alerts: TimingAnalysis[] }) {
     <div className="space-y-4">
       <p className="text-sm text-gray-600 mb-4">
         These candidates show signals indicating they may be ready for a change.
+        Analyzed {data.total_scored} people in your network.
       </p>
-      {alerts.map((alert, index) => (
+      {allCandidates.map((candidate, index) => (
         <div
-          key={alert.person_id || index}
+          key={candidate.id || index}
           className={`p-4 rounded-lg border ${
-            alert.readiness_score >= 0.7
+            candidate.readiness_score >= 0.7
               ? 'border-green-200 bg-green-50'
-              : alert.readiness_score >= 0.4
+              : candidate.readiness_score >= 0.4
               ? 'border-yellow-200 bg-yellow-50'
               : 'border-gray-200 bg-gray-50'
           }`}
@@ -198,52 +237,43 @@ function TimingTab({ alerts }: { alerts: TimingAnalysis[] }) {
           <div className="flex items-start justify-between">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-gray-600 font-medium border">
-                {alert.person_name.charAt(0)}
+                {candidate.name.charAt(0)}
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900">{alert.person_name}</span>
+                  <span className="font-medium text-gray-900">{candidate.name}</span>
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    alert.readiness_score >= 0.7
+                    candidate.readiness_score >= 0.7
                       ? 'bg-green-200 text-green-800'
-                      : alert.readiness_score >= 0.4
+                      : candidate.readiness_score >= 0.4
                       ? 'bg-yellow-200 text-yellow-800'
                       : 'bg-gray-200 text-gray-800'
                   }`}>
-                    {Math.round(alert.readiness_score * 100)}% ready
+                    {Math.round(candidate.readiness_score * 100)}% ready
                   </span>
                 </div>
                 <div className="text-sm text-gray-600">
-                  {alert.current_title} at {alert.current_company}
+                  {candidate.title} at {candidate.company}
                 </div>
 
                 {/* Signals */}
-                <div className="mt-2 space-y-1">
-                  {alert.signals.map((signal, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        signal.score_impact >= 0.2 ? 'bg-green-500' :
-                        signal.score_impact >= 0.1 ? 'bg-yellow-500' :
-                        'bg-gray-400'
-                      }`}></span>
-                      <span className="text-gray-600">{signal.description}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Recommended Action */}
-                {alert.recommended_action && (
-                  <div className="mt-2 text-xs font-medium text-purple-600">
-                    Suggested: {alert.recommended_action}
+                {candidate.signals && candidate.signals.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {candidate.signals.map((signal, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
+                        <span className="text-gray-600">{signal}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             </div>
 
             {/* LinkedIn Link */}
-            {alert.linkedin_url && (
+            {candidate.linkedin_url && (
               <a
-                href={alert.linkedin_url}
+                href={candidate.linkedin_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"

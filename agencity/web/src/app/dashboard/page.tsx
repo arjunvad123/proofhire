@@ -7,13 +7,13 @@ import { getCompany, getRoles, getNetworkStats, getDailyDigest, type CompanyWith
 interface DailyDigest {
   date: string;
   summary: string;
-  priority_actions: {
-    priority: string;
-    category: string;
-    action: string;
-    targets: string[];
+  top_actions: {
+    priority?: string;
+    category?: string;
+    action?: string;
+    targets?: string[];
   }[];
-  stats: Record<string, number>;
+  alert_counts: Record<string, number>;
 }
 
 export default function DashboardPage() {
@@ -169,14 +169,14 @@ export default function DashboardPage() {
       </div>
 
       {/* Priority Actions from Daily Digest */}
-      {digest && digest.priority_actions.length > 0 && (
+      {digest && digest.top_actions && digest.top_actions.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Today&apos;s Priority Actions</h2>
             <span className="text-sm text-gray-500">{digest.date}</span>
           </div>
           <div className="space-y-3">
-            {digest.priority_actions.slice(0, 5).map((action, index) => (
+            {digest.top_actions.slice(0, 5).map((action: { priority?: string; action?: string; category?: string; targets?: string[] }, index: number) => (
               <div
                 key={index}
                 className={`flex items-start gap-3 p-3 rounded-lg ${
@@ -198,10 +198,12 @@ export default function DashboardPage() {
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-gray-900">{action.action}</div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {action.category} • {action.targets.slice(0, 3).join(', ')}
-                    {action.targets.length > 3 && ` +${action.targets.length - 3} more`}
-                  </div>
+                  {action.category && action.targets && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      {action.category} • {action.targets.slice(0, 3).join(', ')}
+                      {action.targets.length > 3 && ` +${action.targets.length - 3} more`}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

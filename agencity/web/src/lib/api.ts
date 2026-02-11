@@ -496,13 +496,13 @@ export async function getActivationRequests(
 export async function getDailyDigest(companyId: string): Promise<{
   date: string;
   summary: string;
-  priority_actions: {
-    priority: string;
-    category: string;
-    action: string;
-    targets: string[];
+  top_actions: {
+    priority?: string;
+    category?: string;
+    action?: string;
+    targets?: string[];
   }[];
-  stats: Record<string, number>;
+  alert_counts: Record<string, number>;
 }> {
   return request(`/v3/company/digest/${companyId}`);
 }

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Confido Setup</title>
+  <style>
+    body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+    .btn { background: #2563eb; color: white; padding: 12px 24px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .success { color: #16a34a; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Confido Dashboard Setup</h1>
+  <p>Click the button below to set up your dashboard with the imported LinkedIn data.</p>
+
+  <button class="btn" onclick="setup()">Set Up Dashboard</button>
+
+  <div id="status"></div>
+
+  <script>
+    function setup() {
+      const state = {
+        companyId: "100b5ac1-1912-4970-a378-04d0169fd597",
+        company: {
+          id: "100b5ac1-1912-4970-a378-04d0169fd597",
+          name: "Confido",
+          domain: "confidotech.com",
+          industry: "Fintech",
+          tech_stack: ["Python", "React", "AI/ML", "PostgreSQL"],
+          team_size: 28,
+          people_count: 305,
+          roles_count: 4,
+          linkedin_imported: true,
+          onboarding_complete: true
+        },
+        roles: [
+          { id: "1", title: "Software Engineer", status: "active" },
+          { id: "2", title: "Senior Sales Development Representative", status: "active" },
+          { id: "3", title: "Head of Finance", status: "active" },
+          { id: "4", title: "Founding Growth", status: "active" }
+        ],
+        linkedinImport: { records_created: 305, records_matched: 0 },
+        isComplete: true,
+        currentStep: 6
+      };
+
+      localStorage.setItem('onboarding-state', JSON.stringify(state));
+
+      document.getElementById('status').innerHTML = '<p class="success">✓ Setup complete! Redirecting to dashboard...</p>';
+
+      setTimeout(() => {
+        window.location.href = '/dashboard';
+      }, 1000);
+    }
+  </script>
+</body>
+</html>
