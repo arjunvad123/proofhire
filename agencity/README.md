@@ -8,7 +8,21 @@ A proactive end-to-end hiring agent for early-stage startups. Tell us what you n
 
 ![Agencity Demo](docs/demo/screenshot.png)
 
-**Live Demo:** Start the server and visit `http://localhost:3000/agencity`
+**Web Demo:** Start the server and visit `http://localhost:3000/agencity`
+
+**Slack Bot:** Add @hermes to your Slack workspace and mention it to find candidates
+
+## Slack Integration
+
+Use Hermes directly in Slack:
+
+```
+@hermes I need a prompt engineer for my AI startup
+```
+
+Hermes will ask clarifying questions in a thread and return candidates with honest evaluations.
+
+See [docs/slack/SLACK_SETUP.md](docs/slack/SLACK_SETUP.md) for setup instructions.
 
 ## Features
 

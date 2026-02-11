@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # ProductHunt API
     producthunt_api_key: str = ""
 
+    # Slack Integration
+    slack_bot_token: str = ""  # xoxb-...
+    slack_signing_secret: str = ""  # Signing secret from Slack app
+    slack_client_id: str = ""  # For OAuth install flow
+    slack_client_secret: str = ""  # For OAuth install flow
+    slack_redirect_uri: str = ""  # OAuth redirect URI
+
     # Context Management (learned from OpenClaw)
     max_context_tokens: int = 100_000
     soft_trim_ratio: float = 0.3  # Trigger soft compression at 30%
