@@ -4,18 +4,19 @@ Slack integration for Hermes agent.
 Allows users to interact with Agencity via @hermes mentions in Slack.
 """
 
-import asyncio
 import hashlib
 import hmac
 import logging
 import time
-from typing import Any
+import uuid
+from datetime import datetime
 
 import httpx
 
 from app.config import settings
 from app.core.conversation_engine import ConversationEngine
 from app.core.search_engine import SearchEngine
+from app.models.conversation import Conversation, ConversationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class SlackBot:
         self.search_engine = SearchEngine()
 
         # Track active conversations per channel/thread
-        self.conversations: dict[str, str] = {}  # thread_ts -> conversation_id
+        self.conversations: dict[str, Conversation] = {}  # thread_key -> Conversation
 
     def verify_signature(self, body: bytes, timestamp: str, signature: str) -> bool:
         """Verify that the request came from Slack."""
@@ -45,7 +46,10 @@ class SlackBot:
             return False
 
         # Check timestamp to prevent replay attacks
-        if abs(time.time() - int(timestamp)) > 60 * 5:
+        try:
+            if abs(time.time() - int(timestamp)) > 60 * 5:
+                return False
+        except (ValueError, TypeError):
             return False
 
         sig_basestring = f"v0:{timestamp}:{body.decode()}"
@@ -83,34 +87,10 @@ class SlackBot:
                 },
                 json=payload,
             )
-            return response.json()
-
-    async def update_message(
-        self,
-        channel: str,
-        ts: str,
-        text: str,
-        blocks: list[dict] | None = None,
-    ) -> dict:
-        """Update an existing Slack message."""
-        async with httpx.AsyncClient() as client:
-            payload = {
-                "channel": channel,
-                "ts": ts,
-                "text": text,
-            }
-            if blocks:
-                payload["blocks"] = blocks
-
-            response = await client.post(
-                "https://slack.com/api/chat.update",
-                headers={
-                    "Authorization": f"Bearer {self.bot_token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            return response.json()
+            result = response.json()
+            if not result.get("ok"):
+                logger.error(f"Slack API error: {result.get('error')}")
+            return result
 
     async def add_reaction(self, channel: str, timestamp: str, emoji: str) -> dict:
         """Add a reaction to a message."""
@@ -148,7 +128,7 @@ class SlackBot:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Known Facts*\n{facts}"
+                    "text": f"*:white_check_mark: Known Facts*\n{facts}"
                 }
             })
 
@@ -159,7 +139,7 @@ class SlackBot:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Observed Signals*\n{signals}"
+                    "text": f"*:mag: Observed Signals*\n{signals}"
                 }
             })
 
@@ -170,7 +150,7 @@ class SlackBot:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Unknown (verify in conversation)*\n{unknown}"
+                    "text": f"*:grey_question: Unknown (verify in conversation)*\n{unknown}"
                 }
             })
 
@@ -181,7 +161,7 @@ class SlackBot:
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": f"💡 *Why consider:* {candidate['why_consider']}"
+                        "text": f":bulb: *Why consider:* {candidate['why_consider']}"
                     }
                 ]
             })
@@ -193,7 +173,7 @@ class SlackBot:
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": f"👉 *Next step:* {candidate['next_step']}"
+                        "text": f":point_right: *Next step:* {candidate['next_step']}"
                     }
                 ]
             })
@@ -214,7 +194,7 @@ class SlackBot:
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"🎯 Found {len(candidates)} candidates",
+                    "text": f"Found {len(candidates)} candidates",
                     "emoji": True
                 }
             },
@@ -268,7 +248,12 @@ class SlackBot:
         reply_thread = thread_ts or message_ts
 
         # Remove the bot mention from the text
-        clean_text = text.replace("<@", "").split(">", 1)[-1].strip()
+        clean_text = text
+        if "<@" in text:
+            # Remove @mention
+            parts = text.split(">", 1)
+            if len(parts) > 1:
+                clean_text = parts[1].strip()
 
         if not clean_text:
             await self.send_message(
@@ -286,37 +271,47 @@ class SlackBot:
             # Get or create conversation for this thread
             conv_key = f"{channel}:{reply_thread}"
 
-            if conv_key in self.conversations:
-                # Continue existing conversation
-                conv_id = self.conversations[conv_key]
-                result = await self.conversation_engine.send_message(conv_id, clean_text)
-            else:
-                # Start new conversation
-                result = await self.conversation_engine.start_conversation(
+            if conv_key not in self.conversations:
+                # Create new conversation
+                self.conversations[conv_key] = Conversation(
+                    id=str(uuid.uuid4()),
                     user_id=user,
-                    initial_message=clean_text,
+                    status=ConversationStatus.IN_PROGRESS,
+                    created_at=datetime.utcnow(),
                 )
-                self.conversations[conv_key] = result["id"]
+
+            conversation = self.conversations[conv_key]
+
+            # Process the message through conversation engine
+            result = await self.conversation_engine.process_message(
+                conversation,
+                clean_text,
+            )
 
             # Send the agent's response
             await self.send_message(
                 channel,
-                result["message"],
+                result.message,
                 thread_ts=reply_thread,
             )
 
             # If we have a blueprint, search for candidates
-            if result.get("blueprint"):
+            if result.blueprint:
                 # Send searching message
-                searching_msg = await self.send_message(
+                await self.send_message(
                     channel,
-                    "🔍 Searching our network of 1,375+ candidates...",
+                    ":mag: Searching our network of 1,375+ candidates...",
                     thread_ts=reply_thread,
                 )
 
                 # Run the search
-                search_result = await self.search_engine.search(result["blueprint"])
-                candidates = search_result.get("candidates", [])
+                shortlist = await self.search_engine.search(result.blueprint, limit=5)
+
+                # Convert candidates to dict format for formatting
+                candidates = []
+                for c in shortlist.candidates:
+                    # Use summary_for_display() method which handles the nested structure
+                    candidates.append(c.summary_for_display())
 
                 # Format and send results
                 text, blocks = self.format_search_results(candidates)
@@ -327,12 +322,15 @@ class SlackBot:
                     blocks=blocks if blocks else None,
                 )
 
+                # Mark conversation complete
+                conversation.status = ConversationStatus.COMPLETE
+
             # Add success reaction
             if message_ts:
                 await self.add_reaction(channel, message_ts, "white_check_mark")
 
         except Exception as e:
-            logger.error(f"Error handling mention: {e}")
+            logger.error(f"Error handling mention: {e}", exc_info=True)
             await self.send_message(
                 channel,
                 f"Sorry, I ran into an error: {str(e)}",

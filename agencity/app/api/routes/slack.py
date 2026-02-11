@@ -36,14 +36,14 @@ async def slack_events(
     body = await request.body()
     payload = await request.json()
 
-    # Verify the request is from Slack (skip in dev if no secret)
-    if slack_bot.signing_secret:
-        if not slack_bot.verify_signature(body, x_slack_request_timestamp or "", x_slack_signature or ""):
-            raise HTTPException(status_code=401, detail="Invalid signature")
-
-    # Handle URL verification (Slack app setup)
+    # Handle URL verification first (doesn't need signature verification)
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge")}
+
+    # Verify the request is from Slack for other events
+    if slack_bot.signing_secret and x_slack_signature and x_slack_request_timestamp:
+        if not slack_bot.verify_signature(body, x_slack_request_timestamp, x_slack_signature):
+            raise HTTPException(status_code=401, detail="Invalid signature")
 
     # Handle events
     if payload.get("type") == "event_callback":
