@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Pearch AI (LinkedIn alternative)
     pearch_api_key: str = ""
 
+    # Supabase (Candidate Database)
+    supabase_url: str = ""
+    supabase_key: str = ""
+
     # ProductHunt API
     producthunt_api_key: str = ""
 

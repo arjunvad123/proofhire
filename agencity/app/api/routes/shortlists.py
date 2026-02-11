@@ -160,3 +160,39 @@ async def submit_feedback(shortlist_id: str, feedback: CandidateFeedback):
     )
 
     return {"status": "ok", "message": "Feedback recorded"}
+
+
+@router.get("/demo/candidates")
+async def get_demo_candidates():
+    """
+    Get top candidates for demo purposes.
+
+    Returns the most impressive candidates with rich data.
+    """
+    from app.sources.network import NetworkSource
+
+    source = NetworkSource()
+    candidates = await source.get_demo_candidates(limit=5)
+
+    results = []
+    for c in candidates:
+        results.append({
+            "id": c.id,
+            "name": c.name,
+            "email": c.email,
+            "school": c.school,
+            "github_username": c.github_username,
+            "github_url": c.github_url,
+            "skills": c.skills[:10],  # Top 10 skills
+            "github_repos": [
+                {
+                    "name": r.name,
+                    "description": r.description,
+                    "language": r.language,
+                    "stars": r.stars,
+                }
+                for r in c.github_repos[:5]
+            ],
+        })
+
+    return {"candidates": results, "count": len(results)}
