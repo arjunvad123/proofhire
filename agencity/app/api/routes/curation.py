@@ -12,7 +12,7 @@ from app.models.curation import (
 from app.services.curation_engine import CandidateCurationEngine
 from app.core.database import get_supabase_client
 
-router = APIRouter(prefix="/api/v1/curation", tags=["curation"])
+router = APIRouter(prefix="/v1/curation", tags=["curation"])
 
 
 def get_curation_engine():
