@@ -80,7 +80,7 @@ Focus on technical signals and verifiable accomplishments. If their LinkedIn is 
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "llama-3.1-sonar-large-128k-online",  # Use online model for web search
+                        "model": "sonar",  # Perplexity's online search model
                         "messages": [
                             {
                                 "role": "system",
