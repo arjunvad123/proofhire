@@ -33,11 +33,16 @@ export default function DashboardPage() {
           const state = JSON.parse(saved);
           if (state.companyId) {
             setCompanyId(state.companyId);
+            return;
           }
         } catch {
           // ignore
         }
       }
+
+      // FALLBACK: Default to Confido for demo/testing
+      // This ensures the dashboard populates with data immediately
+      setCompanyId("100b5ac1-1912-4970-a378-04d0169fd597");
     }
   }, []);
 
@@ -179,22 +184,20 @@ export default function DashboardPage() {
             {digest.top_actions.slice(0, 5).map((action: { priority?: string; action?: string; category?: string; targets?: string[] }, index: number) => (
               <div
                 key={index}
-                className={`flex items-start gap-3 p-3 rounded-lg ${
-                  action.priority === 'high'
+                className={`flex items-start gap-3 p-3 rounded-lg ${action.priority === 'high'
                     ? 'bg-red-50 border border-red-100'
                     : action.priority === 'medium'
-                    ? 'bg-yellow-50 border border-yellow-100'
-                    : 'bg-gray-50 border border-gray-100'
-                }`}
+                      ? 'bg-yellow-50 border border-yellow-100'
+                      : 'bg-gray-50 border border-gray-100'
+                  }`}
               >
                 <div
-                  className={`w-2 h-2 rounded-full mt-2 ${
-                    action.priority === 'high'
+                  className={`w-2 h-2 rounded-full mt-2 ${action.priority === 'high'
                       ? 'bg-red-500'
                       : action.priority === 'medium'
-                      ? 'bg-yellow-500'
-                      : 'bg-gray-400'
-                  }`}
+                        ? 'bg-yellow-500'
+                        : 'bg-gray-400'
+                    }`}
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-gray-900">{action.action}</div>
