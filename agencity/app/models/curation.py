@@ -164,6 +164,9 @@ class UnifiedCandidate(BaseModel):
     enrichment_source: Optional[str] = None
     has_enrichment: bool = False
 
+    # Deep research (from Perplexity, GitHub, etc.)
+    deep_research: Optional[Dict[str, Any]] = None
+
     # Calculated
     data_completeness: float = 0.0
 

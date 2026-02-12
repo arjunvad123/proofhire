@@ -4,8 +4,9 @@ Candidate Curation Engine.
 Curates shortlist of candidates for a role by:
 1. Ranking all network candidates with incomplete data
 2. Enriching top candidates on-demand
-3. Re-ranking with enriched data
-4. Building rich context for final shortlist
+3. Deep research on top 5 candidates (Perplexity)
+4. Re-ranking with enriched data
+5. Building rich context for final shortlist
 """
 
 from typing import List, Dict, Any, Optional
@@ -18,6 +19,8 @@ from app.models.curation import (
     MatchStrength
 )
 from app.services.candidate_builder import CandidateBuilder
+from app.services.research.perplexity_researcher import DeepResearchEngine
+from app.config import settings
 import re
 
 
@@ -102,6 +105,34 @@ class CandidateCurationEngine:
             # For now, just mark as attempted
             for item in to_enrich:
                 item['enrichment_attempted'] = True
+
+        # 4.5. Deep research on top 5 candidates using Perplexity
+        if settings.perplexity_api_key:
+            top_5 = ranked_candidates[:5]
+            print(f"🔬 Running deep research on top {len(top_5)} candidates...")
+
+            research_engine = DeepResearchEngine(settings.perplexity_api_key)
+
+            try:
+                # Extract candidates for research
+                candidates_to_research = [item['candidate'] for item in top_5]
+
+                # Run deep research
+                enhanced_candidates = await research_engine.enhance_candidates(
+                    candidates_to_research,
+                    role_title=role.get('title', ''),
+                    role_skills=role.get('required_skills', []),
+                    top_n=5
+                )
+
+                # Update candidates with research insights
+                for i, enhanced in enumerate(enhanced_candidates):
+                    top_5[i]['candidate'] = enhanced
+                    top_5[i]['has_deep_research'] = True
+
+            except Exception as e:
+                print(f"⚠️  Deep research failed: {e}")
+                # Continue without deep research
 
         # 5. Build rich context for final shortlist
         shortlist = []
@@ -416,6 +447,41 @@ class CandidateCurationEngine:
         unknowns = []
         standout_signal = None
 
+        # 0. Deep research insights (if available)
+        if hasattr(candidate, 'deep_research') and candidate.deep_research:
+            research = candidate.deep_research
+            raw_insights = research.get('raw_research', '')
+
+            if raw_insights and len(raw_insights) > 100:
+                # Parse Perplexity research into structured insights
+                insights = self._parse_research_insights(raw_insights, role)
+
+                # Add research-based points to why_consider
+                if insights.get('technical_skills'):
+                    why_consider.append(WhyConsiderPoint(
+                        category="Deep Research: Technical Skills",
+                        strength=MatchStrength.HIGH,
+                        points=[f"🔬 {point}" for point in insights['technical_skills'][:3]]
+                    ))
+
+                if insights.get('achievements'):
+                    why_consider.append(WhyConsiderPoint(
+                        category="Deep Research: Achievements",
+                        strength=MatchStrength.HIGH,
+                        points=[f"🏆 {point}" for point in insights['achievements'][:3]]
+                    ))
+
+                if insights.get('online_presence'):
+                    why_consider.append(WhyConsiderPoint(
+                        category="Deep Research: Online Presence",
+                        strength=MatchStrength.MEDIUM,
+                        points=[f"🌐 {point}" for point in insights['online_presence'][:2]]
+                    ))
+
+                # Extract standout signal
+                if insights.get('standout'):
+                    standout_signal = f"🔬 Research: {insights['standout']}"
+
         # 1. Skills match section
         if candidate.skills and role.get('required_skills'):
             matched_skills = [
@@ -534,6 +600,57 @@ class CandidateCurationEngine:
             standout_signal=standout_signal,
             warm_path=warm_path
         )
+
+    def _parse_research_insights(self, raw_research: str, role: dict) -> Dict[str, Any]:
+        """
+        Parse Perplexity research response into structured insights.
+
+        Returns dict with:
+        - technical_skills: List of specific technical skills found
+        - achievements: List of notable achievements
+        - online_presence: List of online activities/contributions
+        - standout: Single standout signal
+        """
+
+        insights = {
+            'technical_skills': [],
+            'achievements': [],
+            'online_presence': [],
+            'standout': None
+        }
+
+        # Simple parsing for now - look for key indicators
+        lines = raw_research.split('\n')
+
+        for line in lines:
+            line_lower = line.lower().strip()
+
+            # Skip empty lines
+            if not line_lower:
+                continue
+
+            # Technical skills
+            if any(keyword in line_lower for keyword in ['github', 'repository', 'programming', 'framework', 'language']):
+                if len(insights['technical_skills']) < 5:
+                    insights['technical_skills'].append(line.strip(' -•*'))
+
+            # Achievements
+            elif any(keyword in line_lower for keyword in ['won', 'award', 'published', 'hackathon', 'competition', 'founder', 'created']):
+                if len(insights['achievements']) < 5:
+                    insights['achievements'].append(line.strip(' -•*'))
+
+            # Online presence
+            elif any(keyword in line_lower for keyword in ['blog', 'article', 'stackoverflow', 'twitter', 'linkedin', 'medium']):
+                if len(insights['online_presence']) < 5:
+                    insights['online_presence'].append(line.strip(' -•*'))
+
+        # Find standout signal - first achievement or notable project
+        if insights['achievements']:
+            insights['standout'] = insights['achievements'][0]
+        elif insights['technical_skills']:
+            insights['standout'] = insights['technical_skills'][0]
+
+        return insights
 
     def _assess_strength(self, matched: int, total: int) -> MatchStrength:
         """Assess match strength from counts."""
