@@ -12,9 +12,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = True
 
-    # Database
-    database_url: str = "postgresql+asyncpg://agencity:agencity@localhost:5432/agencity"
-
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
@@ -76,6 +73,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()

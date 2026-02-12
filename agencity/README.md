@@ -255,13 +255,6 @@ Founder decisions improve future rankings (coming soon).
 ## Environment Variables
 
 ```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...       # Claude API for conversation
-
-# Candidate Database (Supabase)
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=eyJ...                 # Service role key
-
 # Optional
 GITHUB_TOKEN=ghp_...               # GitHub API for enrichment
 PDL_API_KEY=...                    # People Data Labs
@@ -303,7 +296,7 @@ python scripts/demo_conversation.py
 - **Backend:** FastAPI, Python 3.11+
 - **Frontend:** Next.js 14, React, Tailwind CSS, Framer Motion
 - **Database:** Supabase (PostgreSQL)
-- **AI:** Claude (Anthropic) for conversation and evaluation
+- **AI:** OpenAI GPT-4o for conversation and evaluation
 - **APIs:** GitHub, Devpost, Codeforces, Stack Overflow
 
 ## License

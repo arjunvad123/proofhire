@@ -1,481 +1,605 @@
-# Agencity Backend Architecture
 
-## Overview
+Folder highlights
+Agencity documents detail an AI hiring agent using RL-trained reasoning and Proof Briefs to evaluate candidates proactively, as seen in the Feb 2026 feasibility review.
 
-Build the simplest thing that works end-to-end, then iterate.
+# Agencity: Network Intelligence System Architecture
+
+## Complete Technical Documentation with Confido Example
+
+---
+
+## 1. System Overview
+
+Agencity is a **Network Intelligence Platform** that helps companies hire through their professional networks. Instead of cold outreach, it leverages warm introductions and timing intelligence to find the best candidates at the right moment.
+
+### Core Philosophy
+- **Network-First**: Your best hires come through people you already know
+- **Timing Matters**: Knowing when someone is ready to move is as important as finding them
+- **Warm > Cold**: A warm introduction converts 10x better than cold outreach
+
+---
+
+## 2. The Four Pillars of Intelligence
+
+### Pillar 1: Network Activation (Reverse Reference)
+**Question**: "Who in my network can recommend candidates for this role?"
+
+Instead of searching for candidates directly, we identify **connectors** - people in your network who are well-positioned to recommend others. This creates a "who would you recommend?" workflow.
+
+**Confido Example**:
+```
+Role: Software Engineer
+Top Connectors Found:
+1. Sarah Chen (Engineering Manager @ Stripe) - Priority: 0.85
+   "Hey Sarah, you've worked with so many great engineers at Stripe.
+   We're looking for a software engineer at Confido - would you know
+   anyone who might be a good fit?"
+```
+
+### Pillar 2: Timing Intelligence
+**Question**: "Who in my network might be ready to make a move?"
+
+We analyze signals that indicate career transition readiness:
+- **Layoff Exposure**: Company has announced layoffs
+- **Tenure Patterns**: 2+ years at current role (likely to consider new opportunities)
+- **Activity Signals**: Profile updates, job searching behavior
+
+**Confido Example**:
+```
+High Urgency Candidates (Layoff-Affected):
+- Mike Johnson (Senior Engineer @ Stripe) - Company had layoffs in Jan 2024
+- Lisa Park (Backend Dev @ Meta) - Role elimination announced
+
+Medium Urgency (Long Tenure):
+- James Wilson (4.5 years at Google) - Likely ready for new challenge
+```
+
+### Pillar 3: Network Expansion
+**Question**: "Who should I add to my network to improve hiring reach?"
+
+Identifies gaps in network coverage by role type, seniority, and company.
+
+### Pillar 4: Company Intelligence
+**Question**: "What's happening at companies where my candidates work?"
+
+Tracks company events (layoffs, funding, acquisitions) that affect hiring timing.
+
+---
+
+## 3. Data Architecture
+
+### Database: Supabase (PostgreSQL)
 
 ```
-User Input → Conversation Engine → Role Blueprint → Search Engine → Evaluation → Shortlist
-                                                          ↑
-                                              [Multiple Data Sources]
++---------------------------------------------------------------------+
+|                         SUPABASE DATABASE                           |
++---------------------------------------------------------------------+
+|                                                                     |
+|  +-----------+    +-----------+    +-------------------------+      |
+|  | companies |--->|   roles   |    |        people           |      |
+|  +-----------+    +-----------+    +-------------------------+      |
+|  | id        |    | id        |    | id                      |      |
+|  | name      |    | company_id|    | company_id              |      |
+|  | domain    |    | title     |    | full_name               |      |
+|  | industry  |    | level     |    | email                   |      |
+|  | tech_stack|    | department|    | linkedin_url            |      |
+|  | team_size |    | required_ |    | current_company         |      |
+|  | founder_  |    |   skills  |    | current_title           |      |
+|  |   email   |    | status    |    | headline                |      |
+|  |people_cnt |    +-----------+    | location                |      |
+|  +-----------+                     | trust_score             |      |
+|                                    | is_from_network         |      |
+|  +---------------------+           | skills (jsonb)          |      |
+|  |   data_sources      |           | experience (jsonb)      |      |
+|  +---------------------+           | education (jsonb)       |      |
+|  | id                  |           | enrichment_data (jsonb) |      |
+|  | company_id          |           +-------------------------+      |
+|  | type (linkedin/csv) |                                            |
+|  | status              |                                            |
+|  | records_created     |                                            |
+|  +---------------------+                                            |
+|                                                                     |
++---------------------------------------------------------------------+
+```
+
+### Confido's Data
+
+```
+Company: Confido (100b5ac1-1912-4970-a378-04d0169fd597)
++-- 305 people imported from LinkedIn connections
++-- 4 active roles:
+|   +-- Software Engineer
+|   +-- Senior Sales Development Representative
+|   +-- Head of Finance
+|   +-- Founding Growth
++-- Network Stats:
+    +-- Total connections: 305
+    +-- Engineers: 89
+    +-- Top companies: Google (12), Meta (8), Stripe (7)
+    +-- Average seniority: 3.2
 ```
 
 ---
 
-## Core Components
+## 4. Search System Architecture
 
-### 1. Conversation Engine
-**Purpose:** Understand what the founder actually needs.
+### The Tiered Search Model
+
+When you search for "Software Engineer", the system returns candidates in 4 tiers:
 
 ```
-Input:  "I need a prompt engineer for my startup"
-Output: Structured Role Blueprint (JSON)
++---------------------------------------------------------------------+
+|                     SEARCH: "Software Engineer"                     |
++---------------------------------------------------------------------+
+|                                                                     |
+|  TIER 1: DIRECT NETWORK (Warmth: 100%)                              |
+|  +---------------------------------------------------------------+  |
+|  | People you're directly connected to who match the role        |  |
+|  | - Already have relationship                                   |  |
+|  | - Can reach out directly                                      |  |
+|  | Example: "John Doe - You connected at YC Demo Day"            |  |
+|  +---------------------------------------------------------------+  |
+|                           |                                         |
+|                           v                                         |
+|  TIER 2: WARM INTRO (Warmth: 50-80%)                                |
+|  +---------------------------------------------------------------+  |
+|  | People one degree away - a connection can introduce you       |  |
+|  | - Shared company history (worked together)                    |  |
+|  | - Shared school (alumni network)                              |  |
+|  | Example: "Jane Smith - Sarah (your connection) worked with    |  |
+|  |          her at Stripe 2019-2021"                             |  |
+|  +---------------------------------------------------------------+  |
+|                           |                                         |
+|                           v                                         |
+|  TIER 3: RECRUITERS (Specialty Match)                               |
+|  +---------------------------------------------------------------+  |
+|  | Technical recruiters in your network who specialize in        |  |
+|  | the role you're hiring for                                    |  |
+|  | - Can source candidates externally                            |  |
+|  | - Have existing candidate pipelines                           |  |
+|  | Example: "Alex Recruiter - Specializes in backend engineers"  |  |
+|  +---------------------------------------------------------------+  |
+|                           |                                         |
+|                           v                                         |
+|  TIER 4: COLD OUTREACH (Warmth: 0%)                                 |
+|  +---------------------------------------------------------------+  |
+|  | Qualified candidates with no warm path                        |  |
+|  | - Matched by skills/experience only                           |  |
+|  | - Requires cold outreach or finding alternative warm paths    |  |
+|  | Example: "Bob Engineer - No connection, but strong match"     |  |
+|  +---------------------------------------------------------------+  |
+|                                                                     |
++---------------------------------------------------------------------+
 ```
 
-**How it works:**
-- LLM-powered conversation
-- Has a "question bank" for different role types
-- Decides when it has enough context (heuristic: can fill out Blueprint)
-- Outputs structured data, not just chat
+### Confido Search Results
 
-**Key logic:**
+```
+Search: "Software Engineer"
+Network Size: 305 connections
+Total Candidates Found: 81
+
+Results by Tier:
++-- Tier 1 (Direct Network): 31 candidates
++-- Tier 2 (Warm Intro):     24 candidates
++-- Tier 3 (Recruiters):      1 recruiter
++-- Tier 4 (Cold):           25 candidates
+
+Primary Recommendation:
+"Start with your 31 direct connections - they already know you
+ and are most likely to respond positively."
+```
+
+### Scoring Algorithm
+
+Each candidate gets three scores that combine into a final ranking:
+
 ```python
-class ConversationEngine:
-    def get_next_question(self, context: dict) -> str | None:
-        """Returns next question, or None if we have enough context."""
-
-    def extract_blueprint(self, conversation: list) -> RoleBlueprint:
-        """Extracts structured blueprint from conversation."""
-
-    def has_enough_context(self, context: dict) -> bool:
-        """Checks if we can generate a useful blueprint."""
+combined_score = (
+    0.4 * match_score +      # How well they match the role
+    0.3 * warmth_score +     # How strong the connection is
+    0.3 * readiness_score    # How likely they are to be open to opportunities
+)
 ```
 
-**Blueprint schema:**
-```python
-class RoleBlueprint:
-    role_title: str                    # "Prompt Engineer"
-    company_context: str               # What the startup does
-    specific_work: str                 # What they'll actually build
-    success_criteria: str              # What success looks like (day 60)
-    must_haves: list[str]              # Non-negotiables
-    nice_to_haves: list[str]           # Preferences
-    avoid: list[str]                   # Red flags / anti-patterns
-    location_preferences: list[str]    # Schools, cities, remote
-    calibration_examples: list[str]    # Good/bad hire patterns
+**Match Score** (0-100):
+- Skills overlap with required skills
+- Experience level match
+- Industry relevance
+- Title similarity
+
+**Warmth Score** (0-100):
+- Tier 1: 100 (direct connection)
+- Tier 2: 50-80 (based on connector strength)
+- Tier 3: 40 (recruiter relationship)
+- Tier 4: 0 (no warm path)
+
+**Readiness Score** (0-100):
+- Layoff at current company: +40
+- Tenure > 3 years: +20
+- Recent profile updates: +15
+- Job searching signals: +25
+
+---
+
+## 5. API Architecture
+
+### Backend: FastAPI (Python)
+
+```
++---------------------------------------------------------------------+
+|                    FASTAPI BACKEND (Port 8001)                      |
++---------------------------------------------------------------------+
+|                                                                     |
+|  /api                                                               |
+|  +-- /companies                                                     |
+|  |   +-- POST   /                    Create company                 |
+|  |   +-- GET    /{id}                Get company with stats         |
+|  |   +-- PATCH  /{id}                Update company                 |
+|  |   +-- GET    /{id}/roles          List roles                     |
+|  |   +-- POST   /{id}/roles          Create role                    |
+|  |   +-- POST   /{id}/import/linkedin   Import LinkedIn CSV         |
+|  |   +-- GET    /{id}/network/stats  Get network statistics         |
+|  |                                                                  |
+|  +-- /v2/search                                                     |
+|  |   +-- POST   /                    Tiered candidate search        |
+|  |                                                                  |
+|  +-- /v3                                                            |
+|      +-- /timing/network-analysis/{company_id}  Timing alerts       |
+|      +-- /company/layoffs/{company_id}          Layoff exposure     |
+|      +-- /company/digest/{company_id}           Daily digest        |
+|      +-- /activate/reverse-reference            Network activation  |
+|                                                                     |
++---------------------------------------------------------------------+
+```
+
+### Frontend: Next.js 16 (React)
+
+```
++---------------------------------------------------------------------+
+|                    NEXT.JS FRONTEND (Port 3000)                     |
++---------------------------------------------------------------------+
+|                                                                     |
+|  /                          Landing page                            |
+|  /onboarding                Multi-step company setup                |
+|  /dashboard                                                         |
+|  +-- /                      Overview (stats, quick actions)         |
+|  +-- /search                Tiered candidate search UI              |
+|  +-- /intelligence          Timing alerts, layoff exposure          |
+|  +-- /network               Network activation messages             |
+|  +-- /settings              Company settings, roles                 |
+|                                                                     |
+|  State Management:                                                  |
+|  +-- localStorage['onboarding-state'] = {                           |
+|        companyId: "100b5ac1-...",                                   |
+|        company: { name, domain, ... },                              |
+|        roles: [...],                                                |
+|        linkedinImport: { records_created: 305 }                     |
+|      }                                                              |
+|                                                                     |
++---------------------------------------------------------------------+
 ```
 
 ---
 
-### 2. Search Engine
-**Purpose:** Find candidates from multiple sources.
+## 6. Data Flow: Complete Example
+
+### Confido Hiring a Software Engineer
 
 ```
-Input:  Role Blueprint
-Output: List of raw CandidateData
-```
-
-**Data sources (MVP priority order):**
-
-| Priority | Source | How to access |
-|----------|--------|---------------|
-| P0 | Our network (6,000+) | PostgreSQL query |
-| P1 | GitHub | GitHub API |
-| P2 | Hackathons | Devpost API / scrape |
-| P3 | University clubs | Manual curation / scrape |
-| P4 | LinkedIn | Manual / future API |
-
-**How it works:**
-```python
-class SearchEngine:
-    def search(self, blueprint: RoleBlueprint) -> list[CandidateData]:
-        """Searches all sources, returns raw candidate data."""
-
-        results = []
-
-        # Search our network first (fastest, highest quality)
-        results += self.search_network(blueprint)
-
-        # Enrich with GitHub data
-        results = self.enrich_github(results)
-
-        # Search external sources
-        results += self.search_github_users(blueprint)
-        results += self.search_hackathons(blueprint)
-
-        return self.dedupe(results)
-```
-
-**CandidateData schema:**
-```python
-class CandidateData:
-    # Identity
-    name: str
-    email: str | None
-
-    # Known facts (verifiable)
-    school: str | None
-    major: str | None
-    graduation_year: int | None
-    location: str | None
-    clubs: list[str]
-    courses: list[str]
-
-    # Observed signals (from APIs)
-    github_username: str | None
-    github_repos: list[RepoData]
-    github_activity: ActivityStats
-    hackathons: list[HackathonData]
-    projects: list[ProjectData]
-
-    # Source tracking
-    sources: list[str]  # Where we found this person
-```
-
----
-
-### 3. Evaluation Engine
-**Purpose:** Honestly assess candidates against the blueprint.
-
-```
-Input:  CandidateData + RoleBlueprint
-Output: EvaluatedCandidate (with known/unknown breakdown)
-```
-
-**Key principle: NO CLAIMS WE CAN'T VERIFY.**
-
-```python
-class EvaluationEngine:
-    def evaluate(
-        self,
-        candidate: CandidateData,
-        blueprint: RoleBlueprint
-    ) -> EvaluatedCandidate:
-        """Evaluates candidate honestly against blueprint."""
-
-        return EvaluatedCandidate(
-            candidate=candidate,
-            known_facts=self.extract_known_facts(candidate),
-            observed_signals=self.extract_signals(candidate, blueprint),
-            unknown=self.identify_unknowns(candidate, blueprint),
-            why_consider=self.generate_why(candidate, blueprint),
-            next_step=self.suggest_next_step(candidate, blueprint),
-            relevance_score=self.compute_relevance(candidate, blueprint),  # Internal only
-        )
-```
-
-**EvaluatedCandidate schema:**
-```python
-class EvaluatedCandidate:
-    candidate: CandidateData
-
-    # The honest breakdown
-    known_facts: list[str]       # "UCSD CS, Class of 2026"
-    observed_signals: list[str]  # "2 ML projects on GitHub"
-    unknown: list[str]           # "Actual prompt engineering depth"
-
-    # Reasoning
-    why_consider: str            # Connection to blueprint
-    next_step: str               # What to ask/verify
-
-    # Internal (not shown as "match score")
-    relevance_score: float       # For ranking only
-```
-
-**Evaluation logic (LLM-assisted):**
-```python
-def extract_signals(self, candidate: CandidateData, blueprint: RoleBlueprint) -> list[str]:
-    """
-    Look at candidate data and extract signals relevant to blueprint.
-
-    Example:
-    - Blueprint says: "prompt engineer, production-focused"
-    - Candidate has: GitHub repo with LLM API calls
-    - Signal: "GitHub: repo using Claude API for code generation"
-    """
-
-def identify_unknowns(self, candidate: CandidateData, blueprint: RoleBlueprint) -> list[str]:
-    """
-    What does the blueprint require that we CAN'T verify from available data?
-
-    Example:
-    - Blueprint says: "success = ships fast"
-    - We have: GitHub activity (commits)
-    - But we DON'T have: actual shipping speed in team context
-    - Unknown: "Shipping speed in team environment"
-    """
++--------------------------------------------------------------------------+
+| STEP 1: SETUP                                                            |
+| User visits /public/setup.html -> localStorage populated with Confido ID |
+| Redirects to /dashboard                                                  |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| STEP 2: DASHBOARD LOADS                                                  |
+| Frontend reads companyId from localStorage                               |
+| Parallel API calls:                                                      |
+|   - GET /companies/{id} -> Company info                                  |
+|   - GET /companies/{id}/roles -> 4 roles                                 |
+|   - GET /companies/{id}/network/stats -> 305 connections                 |
+|   - GET /v3/company/digest/{id} -> Today's priority actions              |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| STEP 3: USER SEARCHES                                                    |
+| Clicks "Find Candidates" for Software Engineer role                      |
+| POST /v2/search { company_id, role_title: "Software Engineer" }          |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| STEP 4: SEARCH ENGINE PROCESSES                                          |
+|                                                                          |
+|  4a. Query Supabase for all 305 people                                   |
+|                                                                          |
+|  4b. For each person, calculate:                                         |
+|      - match_score = skills_overlap + title_similarity + experience      |
+|      - warmth_score = network_distance + shared_history                  |
+|      - readiness_score = layoff_signals + tenure + activity              |
+|      - combined_score = 0.4*match + 0.3*warmth + 0.3*readiness           |
+|                                                                          |
+|  4c. Bucket into tiers:                                                  |
+|      - Tier 1: is_from_network=true, match_score > 60                    |
+|      - Tier 2: has warm_path, warmth > 40                                |
+|      - Tier 3: is_recruiter=true                                         |
+|      - Tier 4: remaining qualified candidates                            |
+|                                                                          |
+|  4d. Sort each tier by combined_score DESC                               |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| STEP 5: RESULTS DISPLAYED                                                |
+|                                                                          |
+|  Tier 1: Direct Network (31)                                             |
+|  +--------------------------------------------------------------------+  |
+|  | John Smith - Senior Software Engineer @ Google                     |  |
+|  | Score: 87% | Match: 92% | Warmth: 100% | Readiness: 65%            |  |
+|  | Why: "5 years backend experience, Python expert, you know him"     |  |
+|  | Action: "Reach out directly - you connected at YC Demo Day"        |  |
+|  +--------------------------------------------------------------------+  |
+|                                                                          |
+|  Tier 2: Warm Intro (24)                                                 |
+|  +--------------------------------------------------------------------+  |
+|  | Jane Doe - Backend Engineer @ Stripe                                |  |
+|  | Score: 78% | Match: 85% | Warmth: 60% | Readiness: 80%             |  |
+|  | Why: "Strong Python/Go skills, fintech experience"                 |  |
+|  | Warm Path: "Sarah Chen worked with her at Stripe (2019-2021)"      |  |
+|  | Action: "Ask Sarah for an introduction"                            |  |
+|  +--------------------------------------------------------------------+  |
+|                                                                          |
++--------------------------------------------------------------------------+
 ```
 
 ---
 
-### 4. Shortlist Generator
-**Purpose:** Rank and format candidates for presentation.
+## 7. Intelligence Features Detail
 
-```python
-class ShortlistGenerator:
-    def generate(
-        self,
-        candidates: list[EvaluatedCandidate],
-        blueprint: RoleBlueprint,
-        limit: int = 5
-    ) -> Shortlist:
-        """Generates ranked shortlist."""
+### Timing Intelligence Page
 
-        # Rank by relevance (internal score)
-        ranked = sorted(candidates, key=lambda c: c.relevance_score, reverse=True)
+Shows candidates organized by urgency level:
 
-        # Take top N
-        top = ranked[:limit]
+```
+HIGH URGENCY (Act within 1 week)
++--------------------------------------------------------------------+
+| [!] Mike Johnson - Senior Engineer @ Stripe                        |
+|    Signal: Company announced layoffs affecting his department      |
+|    Readiness Score: 95                                             |
+|    Recommended Action: "Reach out immediately - timing is critical"|
++--------------------------------------------------------------------+
 
-        # Format for output (no scores shown)
-        return Shortlist(
-            blueprint=blueprint,
-            candidates=top,
-            search_sources=self.get_sources_used(),
-            generated_at=datetime.now(),
-        )
+MEDIUM URGENCY (Act within 1 month)
++--------------------------------------------------------------------+
+| [*] Lisa Park - Staff Engineer @ Google                            |
+|    Signal: 4+ years at current role, updated LinkedIn recently     |
+|    Readiness Score: 72                                             |
+|    Recommended Action: "Good time to reconnect, likely exploring"  |
++--------------------------------------------------------------------+
+```
+
+### Layoff Exposure Analysis
+
+Shows which companies in your network have had layoffs:
+
+```
+LAYOFF EXPOSURE SUMMARY
+---------------------------------------------------
+Your network: 305 people
+Affected by recent layoffs: 23 people (7.5%)
+Companies with layoffs: 5
+
+BY COMPANY:
++--------------------------------------------------------------------+
+| Stripe - 8 connections affected                                    |
+| Layoff Date: January 2024 | Scale: 15% workforce                   |
+| Urgency: HIGH                                                      |
+| People: Mike J., Sarah L., James K., ...                           |
++--------------------------------------------------------------------+
+| Meta - 5 connections affected                                      |
+| Layoff Date: February 2024 | Scale: 10% workforce                  |
+| Urgency: HIGH                                                      |
+| People: Lisa P., Tom R., ...                                       |
++--------------------------------------------------------------------+
+```
+
+### Network Activation Messages
+
+Pre-generated outreach messages for your connectors:
+
+```
+ROLE: Software Engineer
+TOP CONNECTORS TO ACTIVATE:
+
+1. Sarah Chen (Engineering Manager @ Stripe)
+   Priority Score: 0.85
+   Reason: "Manages 12 engineers, strong hiring network"
+
+   Generated Message:
+   +--------------------------------------------------------------------+
+   | "Hey Sarah! Hope you're doing well. Quick question - we're         |
+   | looking for a software engineer at Confido. Given your             |
+   | experience at Stripe, would you know anyone who might be           |
+   | a good fit? Looking for someone with strong backend skills         |
+   | and fintech interest. Would really appreciate any                  |
+   | recommendations!"                                                  |
+   +--------------------------------------------------------------------+
+   [Copy Message] [Open LinkedIn]
 ```
 
 ---
 
-## Data Models
+## 8. Technology Stack
 
-```python
-# Core models
+### Backend
+- **Runtime**: Python 3.11+
+- **Framework**: FastAPI (async)
+- **Database**: Supabase (PostgreSQL + REST API)
+- **Vector Search**: Pinecone (for semantic candidate matching)
+- **LLM**: OpenAI GPT-4 (for message generation, analysis)
+- **Enrichment**: People Data Labs, Perplexity
 
-class Conversation:
-    id: str
-    user_id: str
-    messages: list[Message]
-    blueprint: RoleBlueprint | None
-    status: str  # "in_progress", "complete"
-    created_at: datetime
+### Frontend
+- **Framework**: Next.js 16 (App Router)
+- **Styling**: Tailwind CSS
+- **State**: React hooks + localStorage
+- **API Client**: Fetch with typed responses
 
-class Message:
-    role: str  # "user" or "agent"
-    content: str
-    timestamp: datetime
+### Infrastructure
+- **Hosting**: Vercel (frontend), Railway/Fly.io (backend)
+- **Database**: Supabase (managed PostgreSQL)
+- **Vector DB**: Pinecone (managed)
 
-class Candidate:
-    id: str
-    name: str
-    email: str | None
-    data: CandidateData  # JSON blob
-    sources: list[str]
-    created_at: datetime
-    updated_at: datetime
+---
 
-class Shortlist:
-    id: str
-    conversation_id: str
-    blueprint: RoleBlueprint
-    candidates: list[EvaluatedCandidate]
-    feedback: list[CandidateFeedback]  # User's yes/no
-    created_at: datetime
+## 9. API Reference
 
-class CandidateFeedback:
-    candidate_id: str
-    decision: str  # "interested", "pass", "hired"
-    reason: str | None
-    created_at: datetime
+### Search Endpoint
+
+```bash
+POST /api/v2/search
+Content-Type: application/json
+
+{
+  "company_id": "100b5ac1-1912-4970-a378-04d0169fd597",
+  "role_title": "Software Engineer",
+  "limit": 20
+}
+
+Response:
+{
+  "tier_1_network": [...],      # Direct connections
+  "tier_2_one_intro": [...],    # Warm introductions
+  "tier_3_recruiters": [...],   # Relevant recruiters
+  "tier_4_cold": [...],         # Cold candidates
+  "search_target": "Software Engineer",
+  "search_duration_seconds": 1.23,
+  "network_size": 305,
+  "total_candidates": 81,
+  "tier_1_count": 31,
+  "tier_2_count": 24,
+  "tier_3_count": 1,
+  "tier_4_count": 25,
+  "primary_recommendation": "Start with your 31 direct connections..."
+}
+```
+
+### Timing Intelligence Endpoint
+
+```bash
+GET /api/v3/timing/network-analysis/{company_id}?limit=20
+
+Response:
+{
+  "company_id": "100b5ac1-...",
+  "total_analyzed": 305,
+  "candidates_with_signals": 47,
+  "by_urgency": {
+    "high": [...],
+    "medium": [...],
+    "low": [...]
+  }
+}
+```
+
+### Layoff Exposure Endpoint
+
+```bash
+GET /api/v3/company/layoffs/{company_id}
+
+Response:
+{
+  "total_network_members": 305,
+  "affected_members": 23,
+  "affected_percentage": 7.5,
+  "companies_with_layoffs": 5,
+  "by_company": {
+    "Stripe": {
+      "count": 8,
+      "urgency": "high",
+      "layoff_date": "2024-01-15",
+      "scale": "15%",
+      "members": [...]
+    }
+  }
+}
 ```
 
 ---
 
-## Tech Stack (MVP)
-
-| Component | Technology | Why |
-|-----------|------------|-----|
-| API | FastAPI (Python) | Fast to build, async, good typing |
-| Database | PostgreSQL | Relational, good for candidates |
-| Cache | Redis | Session state, rate limiting |
-| LLM | Claude API | Conversation, evaluation reasoning |
-| Search | PostgreSQL full-text + pgvector | Start simple |
-| Queue | Redis Queue (RQ) | Async search jobs |
-| Storage | S3 | Candidate artifacts if needed |
-
----
-
-## API Endpoints
-
-```
-# Conversation
-POST   /conversations              # Start new conversation
-POST   /conversations/{id}/message # Send message, get response
-GET    /conversations/{id}         # Get conversation state
-GET    /conversations/{id}/blueprint # Get extracted blueprint
-
-# Search & Shortlist
-POST   /conversations/{id}/search  # Trigger search (async)
-GET    /shortlists/{id}            # Get shortlist results
-POST   /shortlists/{id}/feedback   # Submit feedback on candidate
-
-# Candidates (internal)
-GET    /candidates                 # List candidates in network
-POST   /candidates                 # Add candidate to network
-GET    /candidates/{id}            # Get candidate details
-```
-
----
-
-## Directory Structure
+## 10. File Structure
 
 ```
 agencity/
-├── app/
-│   ├── api/
-│   │   ├── routes/
-│   │   │   ├── conversations.py
-│   │   │   ├── shortlists.py
-│   │   │   └── candidates.py
-│   │   └── router.py
-│   │
-│   ├── core/
-│   │   ├── conversation_engine.py
-│   │   ├── search_engine.py
-│   │   ├── evaluation_engine.py
-│   │   └── shortlist_generator.py
-│   │
-│   ├── models/
-│   │   ├── conversation.py
-│   │   ├── candidate.py
-│   │   ├── blueprint.py
-│   │   └── shortlist.py
-│   │
-│   ├── services/
-│   │   ├── llm.py              # Claude API wrapper
-│   │   ├── github.py           # GitHub API
-│   │   ├── hackathons.py       # Devpost, etc.
-│   │   └── enrichment.py       # Data enrichment
-│   │
-│   ├── db/
-│   │   ├── database.py
-│   │   └── repositories/
-│   │       ├── conversations.py
-│   │       ├── candidates.py
-│   │       └── shortlists.py
-│   │
-│   ├── config.py
-│   └── main.py
-│
-├── tests/
-├── scripts/
-│   └── seed_candidates.py      # Load initial 6,000 candidates
-├── docker-compose.yml
-├── Dockerfile
-└── requirements.txt
++-- app/                          # Backend (FastAPI)
+|   +-- api/
+|   |   +-- routes/
+|   |       +-- companies.py      # Company CRUD, imports
+|   |       +-- search.py         # V2 tiered search
+|   |       +-- intelligence.py   # V3 timing, layoffs
+|   +-- core/
+|   |   +-- config.py            # Settings, env vars
+|   |   +-- database.py          # Supabase client
+|   +-- services/
+|   |   +-- search_v2.py         # Search engine
+|   |   +-- timing_intel.py      # Timing analysis
+|   |   +-- network_activation.py # Reverse reference
+|   +-- main.py                   # FastAPI app entry
+|
++-- web/                          # Frontend (Next.js)
+|   +-- src/
+|   |   +-- app/
+|   |   |   +-- dashboard/
+|   |   |   |   +-- page.tsx     # Overview
+|   |   |   |   +-- search/      # Search UI
+|   |   |   |   +-- intelligence/# Timing dashboard
+|   |   |   |   +-- network/     # Activation messages
+|   |   |   |   +-- settings/    # Company settings
+|   |   |   +-- onboarding/      # Setup flow
+|   |   +-- lib/
+|   |   |   +-- api.ts           # API client
+|   |   +-- components/          # Reusable UI
+|   +-- public/
+|       +-- setup.html           # Quick setup page
+|
++-- docs/                         # Documentation
+|   +-- architecture/            # System docs
+|
++-- .env                         # Environment variables
 ```
 
 ---
 
-## MVP Build Order
+## 11. Quick Start
 
-### Week 1: Core Conversation
-1. Set up FastAPI project structure
-2. Implement Conversation Engine with Claude
-3. Basic question flow (hardcoded for prompt engineer)
-4. Blueprint extraction
-5. Test: Can we get from vague input to structured blueprint?
+### For Confido (Already Set Up)
 
-### Week 2: Search (Network Only)
-1. PostgreSQL schema for candidates
-2. Seed script to load candidates
-3. Basic search (filter by school, skills, keywords)
-4. Full-text search on candidate data
-5. Test: Can we find relevant candidates from our network?
+1. Visit: `http://localhost:3000/setup.html`
+2. Click "Set Up Dashboard"
+3. You're in! Data already loaded.
 
-### Week 3: Evaluation
-1. Implement Evaluation Engine
-2. Known facts extraction
-3. Signal extraction (LLM-assisted)
-4. Unknown identification
-5. Why consider + next step generation
-6. Test: Is the output honest and useful?
+### For New Companies
 
-### Week 4: End-to-End + Polish
-1. Shortlist generation and ranking
-2. API endpoints for full flow
-3. Feedback collection
-4. Connect to frontend demo
-5. Test: Full flow works end-to-end
-
-### Week 5+: Expand
-- GitHub API integration
-- Hackathon data (Devpost)
-- University club scraping
-- Feedback loop (improve ranking)
+1. Complete onboarding at `/onboarding`
+2. Upload LinkedIn connections CSV
+3. Add roles you're hiring for
+4. Start searching!
 
 ---
 
-## Key Design Decisions
+## 12. Key Metrics to Track
 
-### 1. LLM for reasoning, not for everything
-- Use Claude for: conversation, understanding intent, generating "why consider"
-- Don't use Claude for: search, ranking, database queries
-- Keep it cheap and fast
-
-### 2. Honest by design
-- Never compute a "match score" to show users
-- Always categorize info as known/observed/unknown
-- If we can't verify it, say "unknown"
-
-### 3. Start with our network
-- MVP searches only our 6,000 candidates
-- Much faster to build than API integrations
-- Higher quality (opted-in candidates)
-- Add external sources in v2
-
-### 4. Async search
-- Search can be slow (multiple sources)
-- Return immediately, poll for results
-- Better UX
-
-### 5. Feedback is gold
-- Collect yes/no on every candidate
-- Collect reasons when possible
-- Use to improve ranking over time
+- **Search Efficiency**: Candidates contacted / Hires made
+- **Tier Effectiveness**: % of hires from each tier
+- **Network Utilization**: % of network contacted
+- **Timing Accuracy**: % of "high urgency" that were actually open to opportunities
+- **Message Response Rate**: % of activation messages that got responses
 
 ---
 
-## What We're NOT Building (MVP)
-
-- ❌ Real-time LinkedIn scraping
-- ❌ Automated outreach
-- ❌ Calendar integration
-- ❌ ATS features
-- ❌ Team collaboration
-- ❌ Complex permissions
-- ❌ RL training pipeline (future)
-
----
-
-## Environment Variables
-
-```bash
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/agencity
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# LLM
-ANTHROPIC_API_KEY=sk-ant-...
-
-# GitHub (for v2)
-GITHUB_TOKEN=ghp_...
-
-# App
-APP_ENV=development
-SECRET_KEY=...
-```
-
----
-
-## Next Steps
-
-1. **Create the repo structure** (I can do this now)
-2. **Implement Conversation Engine** (most critical - the intake)
-3. **Set up candidate database** (need to seed the 6,000)
-4. **Build basic search** (filter + full-text)
-5. **Add evaluation** (LLM-assisted honest assessment)
-6. **Connect to frontend** (the demo we built)
-
----
-
-## Questions to Answer
-
-1. **Where are the 6,000 candidates?** Do we have a database/CSV to import?
-2. **What fields do we have for each candidate?** School, GitHub, email?
-3. **Do we have GitHub tokens?** For API access
-4. **Hosting?** Vercel for frontend, Railway/Render for backend?
-5. **Domain?** agencity.com?
+*Generated for Confido - Company ID: 100b5ac1-1912-4970-a378-04d0169fd597*
+*305 connections | 4 active roles | Network Intelligence active*

@@ -856,10 +856,10 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/agencity
 REDIS_URL=redis://localhost:6379/0
 
 # LLM
-ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-proj-...
 
 # Embeddings
-VOYAGE_API_KEY=...  # or OPENAI_API_KEY
+EMBEDDING_MODEL=text-embedding-3-small
 
 # Data Sources
 GITHUB_TOKEN=ghp_...
