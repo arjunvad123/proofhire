@@ -1055,6 +1055,16 @@ agencity/
 
 ## Version History
 
+- **v3.0** (Feb 12, 2026): Unified Agent Architecture
+  - Dual-source search (Hermes 1,375+ AND Network 3,637)
+  - Combined pool: ~5,000 candidates with deduplication
+  - Proof Brief reasoning system with evidence chains
+  - Confidence-based progressive enrichment
+  - Shortlist delivery via Slack
+  - **Architecture**: [UNIFIED_AGENT_ARCHITECTURE.md](./UNIFIED_AGENT_ARCHITECTURE.md)
+  - **Implementation**: [IMPLEMENTATION_GUIDE.md](../IMPLEMENTATION_GUIDE.md)
+  - **Slack Setup**: [SLACK_SETUP.md](../slack/SLACK_SETUP.md)
+
 - **v2.1** (Feb 12, 2026): Deep Research Engine integrated
   - Perplexity AI integration for automatic web research
   - Deep researches top 5 candidates automatically
