@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Perplexity (Enrichment)
     perplexity_api_key: str = ""
 
+    # Anthropic (Claude - Reasoning Layer)
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-20250514"  # Latest Claude model
+
     # Google Custom Search Engine
     google_cse_api_key: str = ""
     google_cse_id: str = ""  # Custom Search Engine ID
