@@ -149,65 +149,146 @@ Same as Railway - update Event Subscriptions URL
 
 ---
 
-## 🔧 ALTERNATIVE: Manual VPS Deployment (DigitalOcean)
+## 🔧 AWS EC2 Deployment (Traditional)
 
-For maximum control and lower long-term cost.
+Traditional EC2 deployment with full control. Best if you have AWS credits.
 
-### Option 2: DigitalOcean Droplet
+**Time:** 25-30 minutes
+**Cost:** ~$10-20/month
+**Best for:** Production workloads on AWS with credits
 
-**Step 1: Create Droplet**
+### Option 2: AWS EC2 Instance
+
+**Step 1: Create EC2 Instance**
+
+Using AWS Console:
 ```
-1. Go to https://digitalocean.com
-2. Click "Create" → "Droplets"
-3. Choose:
-   - Image: Ubuntu 22.04
-   - Size: Basic ($5-6/month)
-   - Region: Closest to your users
-4. Create Droplet
-5. SSH into droplet (instructions emailed)
+1. Go to https://console.aws.amazon.com/ec2
+2. Click "Launch Instance"
+3. Configure:
+   - Name: agencity-production
+   - AMI: Ubuntu Server 22.04 LTS
+   - Instance type: t3.small (2 vCPU, 2GB RAM) or t3.micro (Free tier)
+   - Key pair: Create new → Save as ~/.ssh/agencity-key.pem
+   - Network settings:
+     * Create security group: agencity-sg
+     * Allow: SSH (22), HTTP (80), HTTPS (443), Custom TCP (8001)
+   - Storage: 20 GB gp3
+4. Launch instance
+5. Get public IP from EC2 dashboard
+```
+
+Or using AWS CLI:
+```bash
+# Set your region
+export AWS_REGION=us-east-1
+
+# Launch instance
+aws ec2 run-instances \
+    --image-id ami-0c7217cdde317cfec \
+    --instance-type t3.small \
+    --key-name agencity-key \
+    --region $AWS_REGION
+
+# Get public IP
+aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=agencity-production" \
+    --query "Reservations[0].Instances[0].PublicIpAddress" \
+    --output text
+```
+
+**Configure SSH key permissions:**
+```bash
+chmod 400 ~/.ssh/agencity-key.pem
+
+# Test connection
+ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
 ```
 
 **Step 2: Install Dependencies**
 ```bash
-ssh root@YOUR_DROPLET_IP
+# SSH into EC2 instance
+ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
 
 # Update system
-apt update && apt upgrade -y
+sudo apt update && sudo apt upgrade -y
 
-# Install Python & pip
-apt install -y python3 python3-pip python3-venv
+# Install Python 3.11+ and pip
+sudo apt install -y python3 python3-pip python3-venv
 
 # Install Git
-apt install -y git
+sudo apt install -y git
+
+# Install Redis (for caching)
+sudo apt install -y redis-server
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+
+# Verify Redis
+redis-cli ping  # Should return "PONG"
 
 # Install Nginx (reverse proxy)
-apt install -y nginx
+sudo apt install -y nginx
 
 # Install Certbot (SSL)
-apt install -y certbot python3-certbot-nginx
+sudo apt install -y certbot python3-certbot-nginx
+
+# Verify installations
+python3 --version
+nginx -v
 ```
 
 **Step 3: Clone & Setup Application**
 ```bash
-cd /home
-git clone https://github.com/YOUR_USERNAME/agencity.git
-cd agencity
+# Create application directory
+sudo mkdir -p /opt/agencity
+sudo chown ubuntu:ubuntu /opt/agencity
+cd /opt/agencity
+
+# Clone repository (if using Git)
+git clone https://github.com/YOUR_USERNAME/agencity.git .
+
+# OR upload files from local machine:
+# On your LOCAL machine:
+# cd /Users/aidannguyen/Downloads/proofhire/proofhire/agencity
+# scp -i ~/.ssh/agencity-key.pem -r * ubuntu@YOUR_EC2_IP:/opt/agencity/
 
 # Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install --upgrade pip
+pip install -e .
+
+# Verify installation
+python -c "from app.main import app; print('✓ App loaded successfully')"
 ```
 
 **Step 4: Configure Environment**
 ```bash
-# Copy .env to server
-scp .env root@YOUR_DROPLET_IP:/home/agencity/
+# Create .env file on server
+nano /opt/agencity/.env
 
-# Set permissions
-chmod 600 /home/agencity/.env
+# Paste all your environment variables:
+# APP_ENV=production
+# DEBUG=false
+# REDIS_URL=redis://localhost:6379/0
+# OPENAI_API_KEY=sk-proj-...
+# SUPABASE_URL=https://...
+# SUPABASE_KEY=...
+# SLACK_BOT_TOKEN=xoxb-...
+# SLACK_SIGNING_SECRET=...
+# GITHUB_TOKEN=ghp_...
+# (see Environment Variables section below for full list)
+
+# Save (Ctrl+X, Y, Enter)
+
+# OR copy from local machine:
+# scp -i ~/.ssh/agencity-key.pem .env ubuntu@YOUR_EC2_IP:/opt/agencity/
+
+# Set secure permissions
+chmod 600 /opt/agencity/.env
 ```
 
 **Step 5: Setup Systemd Service**
@@ -217,61 +298,151 @@ sudo nano /etc/systemd/system/agencity.service
 
 # Add this content:
 [Unit]
-Description=Agencity Backend
-After=network.target
+Description=Agencity AI Hiring Agent
+After=network.target redis-server.service
+Wants=redis-server.service
 
 [Service]
-User=root
-WorkingDirectory=/home/agencity
-ExecStart=/home/agencity/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/agencity
+Environment="PATH=/opt/agencity/venv/bin"
+EnvironmentFile=/opt/agencity/.env
+ExecStart=/opt/agencity/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
 Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/agencity/access.log
+StandardError=append:/var/log/agencity/error.log
 
 [Install]
 WantedBy=multi-user.target
 
 # Save (Ctrl+X, Y, Enter)
+
+# Create log directory
+sudo mkdir -p /var/log/agencity
+sudo chown ubuntu:ubuntu /var/log/agencity
 ```
 
 **Step 6: Start Service**
 ```bash
+# Reload systemd, enable and start service
 sudo systemctl daemon-reload
 sudo systemctl enable agencity
 sudo systemctl start agencity
-sudo systemctl status agencity  # Verify it's running
+
+# Check status (should show "active (running)")
+sudo systemctl status agencity
+
+# View logs
+sudo journalctl -u agencity -f
+# Press Ctrl+C to stop viewing logs
 ```
 
 **Step 7: Configure Nginx**
 ```bash
-# Create config
+# Remove default config
+sudo rm /etc/nginx/sites-enabled/default
+
+# Create Agencity config
 sudo nano /etc/nginx/sites-available/agencity
 
-# Add this content:
+# Add this content (replace YOUR_EC2_PUBLIC_IP with your IP):
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name YOUR_EC2_PUBLIC_IP;  # Or your domain: yourdomain.com
+
+    # Increase timeouts for long-running requests
+    proxy_connect_timeout 300;
+    proxy_send_timeout 300;
+    proxy_read_timeout 300;
+    send_timeout 300;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Slack webhook endpoint
+    location /api/slack/ {
+        proxy_pass http://127.0.0.1:8001/api/slack/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 
+# Save (Ctrl+X, Y, Enter)
+
 # Enable site
 sudo ln -s /etc/nginx/sites-available/agencity /etc/nginx/sites-enabled/
+
+# Test Nginx configuration
 sudo nginx -t
+
+# If test passes, restart Nginx
 sudo systemctl restart nginx
+sudo systemctl enable nginx
 ```
 
-**Step 8: Setup SSL**
+**Step 8: Test Deployment**
 ```bash
-sudo certbot --nginx -d your-domain.com
-# Follow prompts to setup HTTPS
+# From your LOCAL machine:
+
+# Test health endpoint
+curl http://YOUR_EC2_PUBLIC_IP/health
+
+# Expected response:
+# {"status":"healthy","environment":"production"...}
+
+# Test root endpoint
+curl http://YOUR_EC2_PUBLIC_IP/
+
+# Expected response:
+# {"name":"Agencity","status":"ok","version":"0.1.0"...}
 ```
 
-**Cost:** $5-6/month
-**Setup Time:** 15-20 minutes
-**Result:** Full control, persistent ✅
+**Step 9: Update Slack Event Subscription**
+```
+1. Go to https://api.slack.com/apps
+2. Select "Hermes" app
+3. Go to "Event Subscriptions"
+4. Update Request URL to: http://YOUR_EC2_PUBLIC_IP/api/slack/events
+5. Wait for ✅ "Verified"
+6. Save Changes
+```
+
+**Step 10: Setup HTTPS/SSL (Production)**
+
+If you have a domain name:
+```bash
+# SSH into server
+ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
+
+# Update Nginx config with your domain
+sudo nano /etc/nginx/sites-available/agencity
+# Change: server_name YOUR_EC2_PUBLIC_IP;
+# To: server_name yourdomain.com;
+
+# Reload Nginx
+sudo systemctl reload nginx
+
+# Get SSL certificate (free with Let's Encrypt)
+sudo certbot --nginx -d yourdomain.com
+
+# Follow prompts - certificate auto-renews every 90 days
+# Test auto-renewal:
+sudo certbot renew --dry-run
+```
+
+**Cost:** $10-20/month (t3.micro ~$7.50, t3.small ~$15)
+**Setup Time:** 25-30 minutes
+**Result:** Full control, production-ready ✅
 
 ---
 
@@ -286,13 +457,13 @@ sudo certbot --nginx -d your-domain.com
 → **Render Free Tier** (limited, but works)
 
 **Want Best Value?**
-→ **DigitalOcean Droplet** ($5/mo, full control)
+→ **AWS EC2** ($10-20/mo, full control, use credits)
 
 **Want Serverless/Autoscale?**
 → **AWS Lambda** or **Vercel** (complex setup)
 
 **Want Maximum Control?**
-→ **Docker on VPS** (DigitalOcean, Linode, AWS EC2)
+→ **AWS EC2** (traditional deployment, full access)
 
 ---
 
@@ -411,10 +582,14 @@ Dashboard → Logs tab → View real-time logs
 Dashboard → Logs tab → View application logs
 ```
 
-### DigitalOcean
+### AWS EC2
 ```bash
-ssh root@your-ip
+ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_EC2_IP
 sudo journalctl -u agencity -f
+
+# View application logs
+tail -f /var/log/agencity/access.log
+tail -f /var/log/agencity/error.log
 ```
 
 ---
@@ -516,11 +691,11 @@ Dashboard → Deployments → Click previous → Click "Redeploy"
 Dashboard → Deployments → Click previous → Deploy again
 ```
 
-**DigitalOcean:**
+**AWS EC2:**
 ```bash
-ssh root@your-ip
+ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_EC2_IP
 sudo systemctl restart agencity
-# Or revert git: git checkout previous-commit
+# Or revert git: cd /opt/agencity && git checkout previous-commit && sudo systemctl restart agencity
 ```
 
 ---
@@ -532,7 +707,8 @@ sudo systemctl restart agencity
 | Railway | Starter | $5-15 | 50GB bandwidth, auto-scaling |
 | Render | Free | $0* | Limited CPU/Memory/Bandwidth |
 | Render | Starter | $7 | Unlimited bandwidth |
-| DigitalOcean | Basic | $5-6 | Full VPS control |
+| AWS EC2 | t3.micro | $7-10 | 2 vCPU, 1GB RAM, Free tier eligible |
+| AWS EC2 | t3.small | $15-20 | 2 vCPU, 2GB RAM |
 | AWS Lambda | Pay-as-use | $0-20 | Serverless, auto-scale |
 | Vercel | Free | $0* | Limited serverless executions |
 
@@ -554,11 +730,13 @@ sudo systemctl restart agencity
 - ✅ Don't mind slightly slower setup
 - ✅ Plan to upgrade to paid eventually
 
-### Choose DigitalOcean if:
+### Choose AWS EC2 if:
+- ✅ Have AWS credits to use
 - ✅ Want maximum control
-- ✅ Want to save money long-term
+- ✅ Traditional deployment approach
 - ✅ Don't mind manual management
 - ✅ Need specific configurations
+- ✅ Want to integrate with other AWS services
 
 ---
 
