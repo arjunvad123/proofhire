@@ -53,6 +53,11 @@ async def slack_events(
         if event.get("bot_id") or event.get("subtype") == "bot_message":
             return {"ok": True}
 
+        # Extract team_id from payload for workspace mapping
+        team_id = payload.get("team_id")
+        if team_id:
+            event["team"] = team_id  # Add to event for handle_event
+
         # Handle the event in the background so we respond quickly
         background_tasks.add_task(slack_bot.handle_event, event)
 
@@ -156,7 +161,19 @@ async def slack_install():
     from app.config import settings
 
     if not settings.slack_client_id:
-        raise HTTPException(status_code=500, detail="Slack client ID not configured")
+        return {
+            "status": "not_configured",
+            "message": "Slack OAuth not configured",
+            "setup_instructions": {
+                "step_1": "Get credentials from https://api.slack.com/apps",
+                "step_2": "Select your Hermes app",
+                "step_3": "Go to 'Basic Information'",
+                "step_4": "Copy Client ID and Client Secret",
+                "step_5": "Add to .env: SLACK_CLIENT_ID=... and SLACK_CLIENT_SECRET=...",
+                "step_6": "Optionally add SLACK_REDIRECT_URI for OAuth callback",
+                "note": "For development, you can manually install the bot via Slack app settings without OAuth"
+            }
+        }
 
     scopes = "app_mentions:read,chat:write,commands,im:history,im:read,im:write,reactions:write"
     install_url = (
@@ -166,7 +183,10 @@ async def slack_install():
         f"&redirect_uri={settings.slack_redirect_uri or ''}"
     )
 
-    return {"install_url": install_url}
+    return {
+        "status": "configured",
+        "install_url": install_url
+    }
 
 
 @router.get("/oauth/callback")

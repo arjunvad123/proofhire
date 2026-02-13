@@ -506,3 +506,211 @@ export async function getDailyDigest(companyId: string): Promise<{
 }> {
   return request(`/v3/company/digest/${companyId}`);
 }
+
+
+// =============================================================================
+// CURATION TYPES
+// =============================================================================
+
+export type MatchStrength = 'high' | 'medium' | 'low' | 'unknown';
+
+export interface WhyConsiderPoint {
+  category: string;
+  strength: MatchStrength;
+  points: string[];
+}
+
+export interface DeepResearchInsight {
+  category: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  insights: string[];
+}
+
+export interface CandidateContext {
+  why_consider: string[]; // Frontend expects string[] in CandidateCard (line 409)
+  unknowns: string[];
+  standout_signal?: string;
+  warm_path?: string;
+  detailed_analysis: {
+    skills_match: {
+      matched: string[];
+      missing: string[];
+    };
+  };
+  suggested_interview_questions: string[];
+}
+
+export interface CuratedCandidate {
+  person_id: string;
+  full_name: string;
+  headline?: string;
+  location?: string;
+  current_company?: string;
+  current_title?: string;
+  linkedin_url?: string;
+  github_url?: string;
+
+  // Scores
+  fit_score: number; // Mapped from match_score
+  confidence: number; // Mapped from fit_confidence
+  data_completeness: number;
+
+  // Metadata
+  was_enriched: boolean;
+  was_researched?: boolean; // Inferred
+
+  // Context flattened for frontend
+  why_consider?: string[];
+  unknowns?: string[];
+  warm_path?: string;
+  deep_research?: DeepResearchInsight[];
+}
+
+export interface CurationResults {
+  role_id: string;
+  role_title: string;
+  candidates: CuratedCandidate[];
+
+  // Stats
+  total_searched: number;
+  total_enriched: number;
+  enrichment_rate: number;
+  total_researched: number;
+  research_rate: number;
+  average_fit_score: number;
+  average_confidence: number;
+  processing_time_seconds: number;
+}
+
+// =============================================================================
+// CURATION API FUNCTIONS
+// =============================================================================
+
+export async function curateCandidates(
+  companyId: string,
+  roleId: string,
+  options: { limit?: number } = {}
+): Promise<CurationResults> {
+  const start = Date.now();
+
+  // 1. Get role details to include title in response
+  // We do this in parallel or rely on backend, but here we'll fetch roles if we don't have the title easily
+  // For now, we'll fetch roles to find the title
+  let roleTitle = 'Unknown Role';
+  try {
+    const roles = await getRoles(companyId);
+    const role = roles.find(r => r.id === roleId);
+    if (role) roleTitle = role.title;
+  } catch (e) {
+    console.warn('Failed to fetch role title', e);
+  }
+
+  // 2. Call backend curation endpoint
+  const response = await request<{
+    shortlist: any[]; // native backend type
+    total_searched: number;
+    metadata: any;
+  }>('/v1/curation/curate', {
+    method: 'POST',
+    body: JSON.stringify({
+      company_id: companyId,
+      role_id: roleId,
+      limit: options.limit || 15
+    }),
+  });
+
+  const processingTime = (Date.now() - start) / 1000;
+
+  // 3. Adapt response to CurationResults
+  const candidates: CuratedCandidate[] = response.shortlist.map((c: any) => ({
+    person_id: c.person_id,
+    full_name: c.full_name,
+    headline: c.headline,
+    location: c.location,
+    current_company: c.current_company,
+    current_title: c.current_title,
+    linkedin_url: c.linkedin_url,
+    github_url: c.github_url,
+
+    fit_score: c.match_score,
+    confidence: c.fit_confidence,
+    data_completeness: c.data_completeness,
+
+    was_enriched: c.was_enriched,
+    was_researched: c.was_enriched, // Assuming enriched means researched for now or based on deep_research presence? 
+    // Actually backend doesn't explicitly return deep_research in CuratedCandidate yet based on my read of curation.py
+    // But page.tsx expects it. For now leaving undefined or mapping from context if available.
+
+    // Flatten context
+    why_consider: c.context?.why_consider?.map((w: any) =>
+      // Handle if WhyConsiderPoint object or string
+      typeof w === 'string' ? w : `${w.points[0]} (${w.category})`
+    ) || [],
+    unknowns: c.context?.unknowns || [],
+    warm_path: c.context?.warm_path,
+
+    // Mock deep_research if not present but needed for UI for now, 
+    // or map if backend evolves. 
+    // The UI checks: candidate.deep_research && candidate.deep_research.length > 0
+    // We'll leave it empty if not provided.
+    deep_research: []
+  }));
+
+  const totalEnriched = response.metadata.enriched_count || 0;
+  const totalResearched = totalEnriched; // Proxied for now
+
+  return {
+    role_id: roleId,
+    role_title: roleTitle,
+    candidates,
+    total_searched: response.total_searched,
+    total_enriched: totalEnriched,
+    enrichment_rate: candidates.length > 0 ? (totalEnriched / candidates.length) * 100 : 0,
+    total_researched: totalResearched,
+    research_rate: candidates.length > 0 ? (totalResearched / candidates.length) * 100 : 0,
+    average_fit_score: response.metadata.avg_match_score || 0,
+    average_confidence: response.metadata.avg_confidence || 0,
+    processing_time_seconds: processingTime
+  };
+}
+
+export async function getCandidateContext(
+  personId: string,
+  roleId: string
+): Promise<CandidateContext> {
+  const result = await request<any>(`/v1/curation/candidate/${personId}/context?role_id=${roleId}`);
+
+  // Adapt to CandidateContext interface
+  return {
+    why_consider: result.context.why_consider.map((w: any) =>
+      typeof w === 'string' ? w : `${w.points[0]}`
+    ),
+    unknowns: result.context.unknowns,
+    standout_signal: result.context.standout_signal,
+    warm_path: result.context.warm_path,
+    detailed_analysis: {
+      skills_match: {
+        matched: [], // Backend doesn't seem to return this in context structure yet, verifying
+        missing: []
+      }
+    },
+    suggested_interview_questions: [] // Backend logic for this might be pending or in different field
+  };
+}
+
+export async function recordCandidateFeedback(
+  personId: string,
+  roleId: string,
+  decision: string, // "interview", "pass", "need_more_info"
+  notes?: string
+): Promise<{ status: string }> {
+  return request(`/v1/curation/candidate/${personId}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify({
+      role_id: roleId,
+      decision,
+      notes
+    })
+  });
+}
+
