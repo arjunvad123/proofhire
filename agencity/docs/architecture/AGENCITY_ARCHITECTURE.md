@@ -6,7 +6,7 @@ Agencity documents detail an AI hiring agent using RL-trained reasoning and Proo
 
 ## Complete Technical Documentation with Confido Example
 
-**Version 2.1** | Last Updated: February 12, 2026 | Status: ✅ Curation System + Deep Research Tested & Integrated
+**Version 2.2** | Last Updated: February 12, 2026 | Status: ✅ Hybrid Search + Warm Path Intelligence Built
 
 ---
 
@@ -32,18 +32,49 @@ Network-first tiered search with warmth scoring
 ### V3: Intelligence System (Active)
 Timing signals, layoff tracking, network activation
 
-### V4: Candidate Curation + Deep Research (New - Tested ✅)
+### V4: Candidate Curation + Deep Research (Tested ✅)
 **Progressive enrichment with honest evaluation + AI-powered deep research**
 
 The Curation System is Agencity's newest component - a production-ready engine that:
 - Ranks all network connections by fit to any role
 - Works even with incomplete data (30% completeness)
 - Enriches only top candidates on-demand (3% vs 100% = 97% cost savings)
-- **🆕 Deep researches top 5 candidates via Perplexity AI** (finds GitHub, skills, achievements)
+- Deep researches top 5 candidates via Perplexity AI (finds GitHub, skills, achievements)
 - Provides honest "Why Consider" and "Unknowns" for each candidate
 - Tested successfully with 3,637 candidates, generating 10-15 candidate shortlists in ~2 minutes
 
 **Status**: Backend ✅ tested, API ✅ integrated, Deep Research ✅ working, Frontend ⏳ pending
+
+### V5: Hybrid External Search + Warm Path Intelligence (New 🆕)
+**Search beyond the network while maintaining warm introduction paths**
+
+The Hybrid Search System extends Agencity beyond the founder's direct network:
+
+1. **External Search Integration**
+   - Clado API: 800M+ profiles via natural language search ($0.01/result)
+   - PDL API: 1.5B profiles with structured data ($0.10/enrichment)
+   - Smart query generation using LLM based on role + network context
+
+2. **Network Index**
+   - Indexes founder's network by company, school, and skills
+   - Enables O(1) lookup of "who in my network worked at Company X?"
+   - Auto-built from LinkedIn imports + enrichment data
+
+3. **Warm Path Finding**
+   - For every external candidate, finds overlap with network:
+     - Company overlap (worked together): warmth 0.65-0.80
+     - School overlap (same alma mater): warmth 0.50
+     - Skill overlap (rare shared skills): warmth 0.30
+   - Generates suggested intro messages
+
+4. **Tiered Results**
+   - Tier 1: Direct network (warmth = 1.0)
+   - Tier 2: External with warm paths (warmth = 0.3-0.8)
+   - Tier 3: External cold (warmth = 0.0)
+
+**Key Differentiator**: Clado gives you WHO to hire. We give you HOW TO REACH THEM.
+
+**Status**: Services ✅ built, API ✅ integrated, Mock data ✅ working, Clado API ⏳ pending key
 
 ---
 
