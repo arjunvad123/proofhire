@@ -221,7 +221,7 @@ async def demo_master_orchestrator():
     print_header("DEMO 3: Master Orchestrator (Unified Pipeline)")
 
     # Create orchestrator
-    orchestrator = MasterOrchestrator(company_id="demo-company-001")
+    orchestrator = MasterOrchestrator()
 
     console.print("[bold]Executing unified search pipeline...[/bold]")
     console.print("  Mode: full (all layers active)")
@@ -250,7 +250,7 @@ async def demo_prediction_layer():
     """Demonstrate the prediction layer."""
     print_header("DEMO 4: Prediction Layer (6 Predictors)")
 
-    engine = PredictionEngine(company_id="demo-company-001")
+    engine = PredictionEngine()
 
     console.print("[bold]Getting full prediction insights...[/bold]")
 
