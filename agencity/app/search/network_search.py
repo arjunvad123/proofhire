@@ -66,7 +66,7 @@ class NetworkSearch:
         # Use a high limit to get all connections (pagination would be better for very large networks)
         all_people_raw = await self.db.get_people(
             self.company_id,
-            limit=10000,  # Get all connections
+            limit=999999,  # Get all connections (pagination handles this)
             filters={"is_from_network": True}
         )
         all_people = self._to_dict_list(all_people_raw)
@@ -263,7 +263,7 @@ class NetworkSearch:
         """
         all_people_raw = await self.db.get_people(
             self.company_id,
-            limit=10000,
+            limit=999999,  # Get all (pagination handles this)
             filters={"is_from_network": True}
         )
         all_people = self._to_dict_list(all_people_raw)
@@ -309,7 +309,7 @@ class NetworkSearch:
         """
         all_people_raw = await self.db.get_people(
             self.company_id,
-            limit=10000,
+            limit=999999,  # Get all (pagination handles this)
             filters={"is_from_network": True}
         )
         all_people = self._to_dict_list(all_people_raw)
@@ -349,7 +349,7 @@ class NetworkSearch:
         """Get statistics about the network."""
         all_people_raw = await self.db.get_people(
             self.company_id,
-            limit=10000,
+            limit=999999,  # Get all (pagination handles this)
             filters={"is_from_network": True}
         )
         all_people = self._to_dict_list(all_people_raw)

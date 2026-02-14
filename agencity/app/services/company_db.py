@@ -495,33 +495,89 @@ class CompanyDBService:
         offset: int = 0,
         filters: dict = None
     ) -> list[Person]:
-        """Get people for a company with optional filters."""
-        params = {
-            "company_id": f"eq.{company_id}",
-            "limit": limit,
-            "offset": offset,
-            "order": "created_at.desc",
-        }
+        """Get people for a company with optional filters.
+        
+        Automatically handles pagination for large result sets.
+        Supabase has a max limit of 1000 per request, so we paginate
+        when requesting more than that.
+        """
+        # Supabase max limit per request
+        SUPABASE_MAX_LIMIT = 1000
+        
+        # If limit is within Supabase's max, make a single request
+        if limit <= SUPABASE_MAX_LIMIT:
+            params = {
+                "company_id": f"eq.{company_id}",
+                "limit": limit,
+                "offset": offset,
+                "order": "created_at.desc",
+            }
 
-        # Apply additional filters
-        if filters:
-            if filters.get("is_from_network") is True:
-                params["is_from_network"] = "eq.true"
-            elif filters.get("is_from_network") is False:
-                params["is_from_network"] = "eq.false"
+            # Apply additional filters
+            if filters:
+                if filters.get("is_from_network") is True:
+                    params["is_from_network"] = "eq.true"
+                elif filters.get("is_from_network") is False:
+                    params["is_from_network"] = "eq.false"
 
-            if filters.get("is_from_existing_db") is True:
-                params["is_from_existing_db"] = "eq.true"
+                if filters.get("is_from_existing_db") is True:
+                    params["is_from_existing_db"] = "eq.true"
 
-            if filters.get("is_from_people_search") is True:
-                params["is_from_people_search"] = "eq.true"
+                if filters.get("is_from_people_search") is True:
+                    params["is_from_people_search"] = "eq.true"
 
-        result = await self._request("GET", "people", params=params)
+            result = await self._request("GET", "people", params=params)
 
-        if result and isinstance(result, list):
-            return [self._dict_to_person(p) for p in result]
+            if result and isinstance(result, list):
+                return [self._dict_to_person(p) for p in result]
 
-        return []
+            return []
+        
+        # For large limits, paginate through results
+        all_people = []
+        current_offset = offset
+        remaining = limit
+        
+        while remaining > 0:
+            batch_size = min(remaining, SUPABASE_MAX_LIMIT)
+            
+            params = {
+                "company_id": f"eq.{company_id}",
+                "limit": batch_size,
+                "offset": current_offset,
+                "order": "created_at.desc",
+            }
+
+            # Apply additional filters
+            if filters:
+                if filters.get("is_from_network") is True:
+                    params["is_from_network"] = "eq.true"
+                elif filters.get("is_from_network") is False:
+                    params["is_from_network"] = "eq.false"
+
+                if filters.get("is_from_existing_db") is True:
+                    params["is_from_existing_db"] = "eq.true"
+
+                if filters.get("is_from_people_search") is True:
+                    params["is_from_people_search"] = "eq.true"
+
+            result = await self._request("GET", "people", params=params)
+            
+            if not result or not isinstance(result, list) or len(result) == 0:
+                # No more results
+                break
+            
+            batch_people = [self._dict_to_person(p) for p in result]
+            all_people.extend(batch_people)
+            
+            # If we got fewer results than requested, we've hit the end
+            if len(result) < batch_size:
+                break
+            
+            current_offset += batch_size
+            remaining -= len(result)
+        
+        return all_people
 
     async def count_people(self, company_id: UUID) -> int:
         """Count people in a company's namespace."""

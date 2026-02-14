@@ -156,7 +156,7 @@ class RecruiterFinder:
         # Get all network connections and convert to dicts
         all_people_raw = await self.db.get_people(
             self.company_id,
-            limit=10000,
+            limit=999999,  # Get all (pagination handles this)
             filters={"is_from_network": True}
         )
         all_people = [self._to_dict(p) for p in all_people_raw]

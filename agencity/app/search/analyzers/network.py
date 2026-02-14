@@ -110,10 +110,12 @@ class NetworkAnalyzer:
         if self._network_cache:
             return self._network_cache
 
-        # Get all people from the network
+        # Get all people from the network (no limit)
+        # Using a very large limit to ensure we get everything
+        # The get_people method will paginate automatically
         people = await company_db.get_people(
             self.company_id,
-            limit=10000,  # Get all
+            limit=999999,  # Effectively unlimited - pagination handles this
             filters={"is_from_network": True}
         )
 

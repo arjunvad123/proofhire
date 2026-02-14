@@ -15,7 +15,7 @@ import httpx
 
 from app.config import settings
 from app.services.conversation_engine import ConversationEngine
-from app.services.unified_search import UnifiedSearchOrchestrator
+from app.services.unified_search import unified_search
 from app.services.shortlist_builder import ShortlistBuilder
 from app.services.slack_workspace_mapper import SlackWorkspaceMapper
 
@@ -39,7 +39,7 @@ class SlackBot:
 
         # NEW: Unified search services
         self.conversation_engine = ConversationEngine()
-        self.search_orchestrator = UnifiedSearchOrchestrator()
+        self.unified_search = unified_search  # Use singleton instance
         self.shortlist_builder = ShortlistBuilder()
         self.workspace_mapper = SlackWorkspaceMapper()
 
@@ -248,30 +248,53 @@ class SlackBot:
             )
             return
 
+
         # Status update
         await self.send_message(
             channel,
-            f"🔍 Searching ~9,000 candidates (Hermes + Network) for: *{role.title}*...",
+            f"🔍 Searching network + external sources for: *{role.title}*...",
             thread_ts=reply_thread,
         )
 
-        # Run unified search
-        search_results = await self.search_orchestrator.search(
+        # Run unified search with new API
+        search_result = await self.unified_search.search(
             company_id=company_id,
-            role=role,
-            limit=100
+            role_title=role.title,
+            required_skills=role.must_haves or [],
+            preferred_skills=role.nice_to_haves or [],
+            location=role.location_preferences[0] if role.location_preferences else None,
+            include_external=True,
+            include_timing=True,
+            deep_research=False,  # Skip deep research for Slack (faster response)
+            limit=20
         )
 
-        # Build shortlist (12 candidates)
+        # Build shortlist (12 candidates) from SearchResult
         shortlist = self.shortlist_builder.build_shortlist(
-            search_results=search_results,
+            search_results={
+                "tier_1_warm": [{"candidate": c, "score": {"total_score": c.combined_score}} 
+                                for c in search_result.candidates if c.tier == 1],
+                "tier_2_cold": [{"candidate": c, "score": {"total_score": c.combined_score}} 
+                                for c in search_result.candidates if c.tier > 1],
+                "stats": {
+                    "total_unique": search_result.total_found,
+                    "network_searched": search_result.tier_1_count,
+                    "hermes_searched": 0,  # Not tracked separately in new version
+                    "duplicates_merged": 0,
+                }
+            },
             target_size=12
         )
 
         # Format for Slack
         blocks = self.shortlist_builder.format_for_slack(
             shortlist=shortlist,
-            stats=search_results["stats"]
+            stats={
+                "total_unique": search_result.total_found,
+                "network_searched": search_result.tier_1_count,
+                "hermes_searched": 0,
+                "duplicates_merged": 0,
+            }
         )
 
         # Deliver shortlist
@@ -282,15 +305,14 @@ class SlackBot:
             blocks=blocks
         )
 
-        # Send stats summary
-        stats = search_results["stats"]
+        # Send stats summary with new data structure
         stats_text = (
             f"_Search complete:_\n"
-            f"• Hermes candidates: {stats['hermes_searched']:,}\n"
-            f"• Network candidates: {stats['network_searched']:,}\n"
-            f"• Duplicates merged: {stats['duplicates_merged']}\n"
-            f"• Total unique: {stats['total_unique']:,}\n"
-            f"• Time: {search_results['duration_seconds']:.1f}s"
+            f"• Network (Tier 1): {search_result.tier_1_count:,}\n"
+            f"• Warm external (Tier 2): {search_result.tier_2_count:,}\n"
+            f"• Cold external (Tier 3): {search_result.tier_3_count:,}\n"
+            f"• Total found: {search_result.total_found:,}\n"
+            f"• Time: {search_result.search_duration_seconds:.1f}s"
         )
 
         await self.send_message(
@@ -298,6 +320,7 @@ class SlackBot:
             stats_text,
             thread_ts=reply_thread,
         )
+
 
     async def handle_event(self, event: dict) -> None:
         """Handle a Slack event."""

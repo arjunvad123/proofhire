@@ -69,7 +69,7 @@ class CandidateRanker:
         # Get all people in network
         people = await company_db.get_people(
             self.company_id,
-            limit=10000,
+            limit=999999,  # Get all (pagination handles this)
             filters={"is_from_network": True}
         )
 
