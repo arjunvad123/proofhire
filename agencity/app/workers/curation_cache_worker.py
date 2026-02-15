@@ -96,6 +96,16 @@ async def generate_cache_for_role(
         total_searched = network_response.count or 0
 
         # Convert shortlist to JSON-serializable format
+        def serialize_context(context):
+            """Convert Pydantic context to JSON-safe dict."""
+            if hasattr(context, 'dict'):
+                # Use Pydantic's model_dump or dict with exclude_none
+                if hasattr(context, 'model_dump'):
+                    return context.model_dump(exclude_none=False, mode='json')
+                else:
+                    return context.dict(exclude_none=False)
+            return context
+
         shortlist_json = [
             {
                 "person_id": c.person_id,
@@ -110,7 +120,7 @@ async def generate_cache_for_role(
                 "fit_confidence": c.fit_confidence,
                 "data_completeness": c.data_completeness,
                 "was_enriched": c.was_enriched,
-                "context": c.context.dict() if hasattr(c.context, 'dict') else c.context
+                "context": serialize_context(c.context)
             }
             for c in shortlist
         ]
@@ -143,10 +153,18 @@ async def generate_cache_for_role(
         }
 
         # Upsert cache (insert or update if exists)
-        supabase.table("curation_cache").upsert(
-            cache_data,
-            on_conflict="company_id,role_id"
-        ).execute()
+        try:
+            supabase.table("curation_cache").upsert(
+                cache_data,
+                on_conflict="company_id,role_id"
+            ).execute()
+        except Exception as cache_error:
+            logger.error(f"Failed to store cache: {cache_error}")
+            logger.error(f"Cache data keys: {cache_data.keys()}")
+            logger.error(f"Shortlist length: {len(cache_data['shortlist'])}")
+            if cache_data['shortlist']:
+                logger.error(f"First candidate context keys: {cache_data['shortlist'][0]['context'].keys() if isinstance(cache_data['shortlist'][0]['context'], dict) else 'not a dict'}")
+            raise
 
         # Update role status to 'cached'
         supabase.table("roles").update({
@@ -165,12 +183,15 @@ async def generate_cache_for_role(
         }
 
     except Exception as e:
-        logger.error(f"✗ Failed to generate cache for role {role_id}: {e}")
+        logger.error(f"✗ Failed to generate cache for role {role_id}: {e}", exc_info=True)
 
         # Update role status to 'failed'
-        supabase.table("roles").update({
-            "curation_status": "failed"
-        }).eq("id", role_id).execute()
+        try:
+            supabase.table("roles").update({
+                "curation_status": "failed"
+            }).eq("id", role_id).execute()
+        except Exception as update_error:
+            logger.error(f"Failed to update role status: {update_error}")
 
         return {
             "status": "failed",

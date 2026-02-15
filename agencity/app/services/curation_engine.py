@@ -99,8 +99,11 @@ class CandidateCurationEngine:
         # 4. Initial ranking
         ranked_candidates.sort(key=lambda x: x['fit_score'], reverse=True)
 
+        top_score = ranked_candidates[0]['fit_score'] if ranked_candidates else 0
+        avg_confidence = sum(c['confidence'] for c in ranked_candidates) / len(ranked_candidates) if ranked_candidates else 0
+
         print(f"\n{'-'*60}")
-        print(f"📈 Rule-based Top Score: {top_score:.1f} | Avg Conf: {sum(c['confidence'] for c in ranked_candidates) / len(ranked_candidates):.2f}")
+        print(f"📈 Rule-based Top Score: {top_score:.1f} | Avg Conf: {avg_confidence:.2f}")
 
         # 5. Enrich TOP 5 candidates with PDL
         top_5 = ranked_candidates[:5]
@@ -966,7 +969,6 @@ class CandidateCurationEngine:
                 'skills': enrichment_data.get('skills', []),
                 'experience': enrichment_data.get('experience', []),
                 'education': enrichment_data.get('education', []),
-                'certifications': enrichment_data.get('certifications', []),
                 'enrichment_source': source,
                 'updated_at': datetime.utcnow().isoformat()
             }

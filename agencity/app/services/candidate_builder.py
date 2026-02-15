@@ -83,27 +83,42 @@ class CandidateBuilder:
         if not person_ids:
             return []
 
-        # Fetch all people in one query
-        people_response = self.supabase.table('people')\
-            .select('*')\
-            .in_('id', person_ids)\
-            .execute()
+        # Batch large queries to avoid PostgreSQL limits
+        # Max 500 IDs per query to prevent "JSON could not be generated" errors
+        # (Supabase has limits on response size for SELECT *)
+        BATCH_SIZE = 500
 
-        # Fetch all enrichments in one query
-        enrichments_response = self.supabase.table('person_enrichments')\
-            .select('*')\
-            .in_('person_id', person_ids)\
-            .execute()
+        print(f"📊 Building {len(person_ids)} candidates in batches of {BATCH_SIZE}...")
+
+        all_people = []
+        all_enrichments = []
+
+        for i in range(0, len(person_ids), BATCH_SIZE):
+            batch_ids = person_ids[i:i + BATCH_SIZE]
+
+            # Fetch people in batch
+            people_response = self.supabase.table('people')\
+                .select('*')\
+                .in_('id', batch_ids)\
+                .execute()
+            all_people.extend(people_response.data)
+
+            # Fetch enrichments in batch
+            enrichments_response = self.supabase.table('person_enrichments')\
+                .select('*')\
+                .in_('person_id', batch_ids)\
+                .execute()
+            all_enrichments.extend(enrichments_response.data)
 
         # Index enrichments by person_id for quick lookup
         enrichments_by_id = {
             e['person_id']: e
-            for e in enrichments_response.data
-        } if enrichments_response.data else {}
+            for e in all_enrichments
+        } if all_enrichments else {}
 
         # Build candidates
         candidates = []
-        for person in people_response.data:
+        for person in all_people:
             enrichment = enrichments_by_id.get(person['id'])
 
             candidate = UnifiedCandidate(
