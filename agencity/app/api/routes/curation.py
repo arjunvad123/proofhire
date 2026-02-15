@@ -68,6 +68,8 @@ async def curate_candidates(
     ```
     """
 
+    import time
+    start_time = time.time()
     try:
         # Run curation
         shortlist = await engine.curate(
@@ -75,6 +77,8 @@ async def curate_candidates(
             role_id=request.role_id,
             limit=request.limit
         )
+
+        processing_time = time.time() - start_time
 
         # Calculate metadata
         avg_score = sum(c.match_score for c in shortlist) / len(shortlist) if shortlist else 0
@@ -92,6 +96,7 @@ async def curate_candidates(
         return CurationResponse(
             shortlist=shortlist,
             total_searched=total_searched,
+            processing_time_seconds=round(processing_time, 2),
             metadata={
                 'avg_match_score': round(avg_score, 1),
                 'enriched_count': enriched_count,
@@ -106,6 +111,7 @@ async def curate_candidates(
                 }
             }
         )
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Curation failed: {str(e)}")
@@ -178,8 +184,23 @@ async def record_founder_feedback(
 
     supabase = get_supabase_client()
 
-    # TODO: Store feedback for learning
-    # For now, just log it
+    update_data = {
+        "updated_at": "now()"
+    }
+
+    if decision == "interview":
+        update_data["pipeline_status"] = "sourced"
+    elif decision == "pass":
+        update_data["pipeline_status"] = None # Remove from pipeline if passed
+    
+    # Update candidate status in people table
+    try:
+        supabase.table("people").update(update_data).eq("id", person_id).execute()
+    except Exception as e:
+        print(f"Failed to update candidate status: {e}")
+
+    # TODO: Store detailed feedback for RL learning
+    # result = supabase.table("feedback_actions").insert({ ... }).execute()
 
     return {
         'status': 'recorded',

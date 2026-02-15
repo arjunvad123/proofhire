@@ -136,11 +136,10 @@ export default function PipelinePage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSelectedStatus('all')}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                selectedStatus === 'all'
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${selectedStatus === 'all'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               All ({candidates.length})
             </button>
@@ -310,34 +309,54 @@ function CandidateRow({
 
           {/* Actions */}
           {showActions && (
-            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center gap-2">
-              {candidate.status === 'sourced' && (
-                <button
-                  onClick={() => handleUpdateStatus('contacted')}
-                  disabled={updating}
-                  className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {candidate.status === 'sourced' && (
+                  <button
+                    onClick={() => handleUpdateStatus('contacted')}
+                    disabled={updating}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updating ? 'Updating...' : 'Mark as Contacted'}
+                  </button>
+                )}
+                {candidate.status === 'contacted' && (
+                  <button
+                    onClick={() => handleUpdateStatus('scheduled')}
+                    disabled={updating}
+                    className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updating ? 'Updating...' : 'Mark as Scheduled'}
+                  </button>
+                )}
+                <button className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
+                  Add Note
+                </button>
+                <a
+                  href={`mailto:${candidate.email}`}
+                  className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
                 >
-                  {updating ? 'Updating...' : 'Mark as Contacted'}
+                  Send Email
+                </a>
+              </div>
+
+              {/* Undo Button */}
+              {candidate.status !== 'sourced' && (
+                <button
+                  onClick={() => {
+                    const prevStatus = candidate.status === 'scheduled' ? 'contacted' : 'sourced';
+                    handleUpdateStatus(prevStatus);
+                  }}
+                  disabled={updating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-orange-600 hover:text-orange-700 text-sm font-medium transition-colors"
+                  title={`Move back to ${candidate.status === 'scheduled' ? 'Contacted' : 'Sourced'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                  Undo Move
                 </button>
               )}
-              {candidate.status === 'contacted' && (
-                <button
-                  onClick={() => handleUpdateStatus('scheduled')}
-                  disabled={updating}
-                  className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {updating ? 'Updating...' : 'Mark as Scheduled'}
-                </button>
-              )}
-              <button className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
-                Add Note
-              </button>
-              <a
-                href={`mailto:${candidate.email}`}
-                className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
-              >
-                Send Email
-              </a>
             </div>
           )}
         </div>

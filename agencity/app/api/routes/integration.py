@@ -360,12 +360,12 @@ async def get_pipeline(
     supabase = get_supabase_client()
 
     try:
-        # Get all people for this company
+        # Get all people for this company who are in the pipeline
         query = supabase.table("people").select(
             "id, full_name, email, current_title, current_company, "
             "trust_score, is_from_network, first_seen, pipeline_status, "
             "contacted_at, scheduled_at"
-        ).eq("company_id", company_id)
+        ).eq("company_id", company_id).not_.is_("pipeline_status", "null")
 
         result = query.order("first_seen", desc=True).limit(limit).execute()
 
@@ -377,8 +377,11 @@ async def get_pipeline(
         }
 
         for person in result.data:
-            # Get pipeline status from database, default to 'sourced'
-            candidate_status = person.get("pipeline_status", "sourced")
+            # Get pipeline status from database
+            candidate_status = person.get("pipeline_status")
+            if not candidate_status:
+                continue
+
 
             # Warmth level
             warmth_score = person.get("trust_score", 0.5)
@@ -461,11 +464,16 @@ async def update_candidate_status(
             "updated_at": datetime.utcnow().isoformat()
         }
 
-        # Set timestamp based on status
+        # Set/Clear timestamps based on status
         if request.status == PipelineStatus.CONTACTED:
             update_data["contacted_at"] = datetime.utcnow().isoformat()
+            update_data["scheduled_at"] = None  # Clear later stage if moving back
         elif request.status == PipelineStatus.SCHEDULED:
             update_data["scheduled_at"] = datetime.utcnow().isoformat()
+            # contacted_at should already be set, but we ensure it's not cleared
+        elif request.status == PipelineStatus.SOURCED:
+            update_data["contacted_at"] = None
+            update_data["scheduled_at"] = None
 
         # Update the candidate
         result = supabase.table("people").update(update_data).eq(

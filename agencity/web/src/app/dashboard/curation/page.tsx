@@ -5,12 +5,14 @@ import {
   curateCandidates,
   getCandidateContext,
   getRoles,
+  recordCandidateFeedback,
   type CurationResults,
   type CuratedCandidate,
   type CandidateContext,
   type Role,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import CurationSummary from '@/components/CurationSummary';
 
 export default function CurationPage() {
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -86,33 +88,9 @@ export default function CurationPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl border border-purple-200 p-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-          Candidate Curation 🔬
-        </h1>
-        <p className="text-gray-700">
-          V4 Curation System with progressive enrichment and AI-powered deep research
-        </p>
-        <div className="mt-4 flex flex-wrap gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-gray-700">97% cost savings vs full enrichment</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <span className="text-gray-700">AI deep research on top 5 candidates</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-            <span className="text-gray-700">~2 minute processing time</span>
-          </div>
-        </div>
-      </div>
-
+    <div className="space-y-6 pt-6">
       {/* Curation Controls */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="bg-white rounded-2xl border border-gray-100 p-8 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Curate Candidates</h2>
 
         <div className="space-y-4">
@@ -156,58 +134,6 @@ export default function CurationPage() {
       {results && (
         <div className="space-y-6">
           {/* Stats Summary */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Curation Results for &quot;{results.role_title}&quot;
-            </h3>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <StatBox
-                label="Candidates"
-                value={results.candidates.length}
-                color="purple"
-              />
-              <StatBox
-                label="Searched"
-                value={results.total_searched}
-                color="blue"
-              />
-              <StatBox
-                label="Enriched"
-                value={results.total_enriched}
-                sublabel={`${results.enrichment_rate.toFixed(1)}%`}
-                color="green"
-              />
-              <StatBox
-                label="Deep Researched"
-                value={results.total_researched}
-                sublabel={`${results.research_rate.toFixed(1)}%`}
-                color="orange"
-              />
-            </div>
-
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div className="text-center p-3 bg-gray-50 rounded-lg">
-                <div className="text-gray-500">Avg Match Score</div>
-                <div className="text-xl font-bold text-gray-900">
-                  {results.average_fit_score.toFixed(0)}/100
-                </div>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded-lg">
-                <div className="text-gray-500">Avg Confidence</div>
-                <div className="text-xl font-bold text-gray-900">
-                  {(results.average_confidence * 100).toFixed(0)}%
-                </div>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded-lg">
-                <div className="text-gray-500">Processing Time</div>
-                <div className="text-xl font-bold text-gray-900">
-                  {results.processing_time_seconds.toFixed(1)}s
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Candidate List */}
           <div className="space-y-4">
             {results.candidates.map((candidate, index) => (
@@ -225,34 +151,6 @@ export default function CurationPage() {
   );
 }
 
-// Stat Box Component
-function StatBox({
-  label,
-  value,
-  sublabel,
-  color,
-}: {
-  label: string;
-  value: number;
-  sublabel?: string;
-  color: 'purple' | 'blue' | 'green' | 'orange';
-}) {
-  const colors = {
-    purple: 'bg-purple-50 border-purple-200',
-    blue: 'bg-blue-50 border-blue-200',
-    green: 'bg-green-50 border-green-200',
-    orange: 'bg-orange-50 border-orange-200',
-  };
-
-  return (
-    <div className={`text-center p-4 border rounded-lg ${colors[color]}`}>
-      <div className="text-sm text-gray-600">{label}</div>
-      <div className="text-2xl font-bold text-gray-900">{value}</div>
-      {sublabel && <div className="text-xs text-gray-500 mt-1">{sublabel}</div>}
-    </div>
-  );
-}
-
 // Candidate Card Component
 function CandidateCard({
   candidate,
@@ -266,6 +164,21 @@ function CandidateCard({
   const [expanded, setExpanded] = useState(false);
   const [context, setContext] = useState<CandidateContext | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [recordingFeedback, setRecordingFeedback] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+
+  const handleFeedback = async (decision: string) => {
+    setRecordingFeedback(true);
+    try {
+      await recordCandidateFeedback(candidate.person_id, roleId, decision);
+      setFeedbackStatus(decision);
+    } catch (err) {
+      console.error('Failed to record feedback:', err);
+      alert('Failed to record selection');
+    } finally {
+      setRecordingFeedback(false);
+    }
+  };
 
   const loadContext = async () => {
     if (context) {
@@ -430,16 +343,37 @@ function CandidateCard({
       </div>
 
       {/* Action Footer */}
-      <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-end gap-2">
-        <button className="px-4 py-2 text-sm text-gray-600 hover:bg-white rounded-lg border border-gray-300">
-          Pass
-        </button>
-        <button className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-300">
-          Need More Info
-        </button>
-        <button className="px-4 py-2 text-sm text-white bg-green-600 hover:bg-green-700 rounded-lg">
-          Interview
-        </button>
+      <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-end gap-3">
+        {feedbackStatus ? (
+          <div className="flex items-center gap-2 text-sm font-medium text-green-600">
+            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            Decision: {feedbackStatus.toUpperCase()} recorded
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={() => handleFeedback('pass')}
+              disabled={recordingFeedback}
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-white hover:text-red-600 hover:border-red-200 rounded-lg border border-gray-300 transition-all disabled:opacity-50"
+            >
+              Pass
+            </button>
+            <button
+              onClick={() => handleFeedback('need_more_info')}
+              disabled={recordingFeedback}
+              className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-100 rounded-lg border border-blue-200 transition-all disabled:opacity-50"
+            >
+              Need More Info
+            </button>
+            <button
+              onClick={() => handleFeedback('interview')}
+              disabled={recordingFeedback}
+              className="px-4 py-2 text-sm text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-sm hover:shadow-md transition-all disabled:opacity-50"
+            >
+              {recordingFeedback ? 'Recording...' : 'Approve for Pipeline'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
