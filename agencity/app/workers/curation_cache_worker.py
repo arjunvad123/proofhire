@@ -56,12 +56,18 @@ async def generate_cache_for_role(
         logger.info(f"Running curation for role {role_id} ({role['title']})...")
 
         # Temporarily disable Perplexity to save API costs during cache generation
+        # NOTE: PDL enrichment still runs for top 5 candidates, but uses 30-day cache
+        # so repeat candidates across roles won't be re-enriched (cost optimization)
         import os
-        original_key = os.environ.get('PERPLEXITY_API_KEY')
+        original_perplexity_key = os.environ.get('PERPLEXITY_API_KEY')
         os.environ['PERPLEXITY_API_KEY'] = ''
 
         try:
-            # Run actual curation (without expensive API calls)
+            # Run actual curation
+            # - PDL enrichment: Top 5 candidates (30-day cache, ~$0.10/new enrichment)
+            # - Claude reasoning: Top 5 candidates (~$0.006 total)
+            # - Perplexity: DISABLED during cache generation (saves ~$0.025)
+            # - Expected cost: ~$0.10-0.50 per role (depending on cache hits)
             shortlist = await engine.curate(
                 company_id=company_id,
                 role_id=role_id,
@@ -69,13 +75,19 @@ async def generate_cache_for_role(
             )
         finally:
             # Restore API key
-            if original_key:
-                os.environ['PERPLEXITY_API_KEY'] = original_key
+            if original_perplexity_key:
+                os.environ['PERPLEXITY_API_KEY'] = original_perplexity_key
 
         # Calculate metadata
         avg_score = sum(c.match_score for c in shortlist) / len(shortlist) if shortlist else 0
         enriched_count = sum(1 for c in shortlist if c.was_enriched)
         avg_confidence = sum(c.fit_confidence for c in shortlist) / len(shortlist) if shortlist else 0
+
+        # Log enrichment details
+        logger.info(f"  📊 Enriched: {enriched_count}/{len(shortlist)} candidates")
+        logger.info(f"  💰 PDL uses 30-day cache - only new candidates incur cost ($0.10 each)")
+        logger.info(f"  🧠 Claude AI analyzed top 5 (~$0.006 total)")
+        logger.info(f"  ⚡ Perplexity disabled during cache generation (saves ~$0.025)")
 
         # Get total network size
         network_response = supabase.table('people').select(

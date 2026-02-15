@@ -48,6 +48,16 @@ logger = logging.getLogger(__name__)
 def print_banner():
     print("\n" + "="*70)
     print("  🎯 CURATION CACHE GENERATOR")
+    print("="*70)
+    print("\n📊 Cost Optimization Strategy:")
+    print("  • PDL Enrichment: Top 5 candidates per role")
+    print("  • 30-day cache: Reuses enriched data across roles")
+    print("  • Claude AI: Analyzes top 5 (~$0.006/role)")
+    print("  • Perplexity: DISABLED during cache generation")
+    print("\n💰 Expected Costs:")
+    print("  • First role: ~$0.50 (5 new enrichments)")
+    print("  • Subsequent roles: ~$0.10-0.30 (cache hits)")
+    print("  • 10 roles: ~$2-3 total (with overlap)")
     print("="*70 + "\n")
 
 

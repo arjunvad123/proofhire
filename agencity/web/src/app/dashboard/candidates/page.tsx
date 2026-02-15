@@ -414,7 +414,7 @@ export default function CandidatesPage() {
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {displayedItems.map((item: any) => {
+                            {displayedItems.flatMap((item: any) => {
                                 // Unified data access for Person vs CuratedCandidate
                                 const id = item.id || item.person_id;
                                 const isCurated = isMatchMode;
@@ -433,182 +433,185 @@ export default function CandidatesPage() {
                                     });
                                 };
 
-                                return (
-                                    <div key={id}>
-                                        <tr className="hover:bg-gray-50/80 transition-colors group">
-                                            <td className="px-6 py-5 whitespace-nowrap">
-                                                <div className="flex items-center">
-                                                    <div className="flex-shrink-0 h-10 w-10">
-                                                        <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm ring-2 ring-white ring-offset-2">
-                                                            {candidate.full_name?.charAt(0)}
-                                                        </div>
-                                                    </div>
-                                                    <div className="ml-4">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{candidate.full_name}</div>
-                                                            {/* Enrichment indicators */}
-                                                            {isCurated && candidate.context?.enrichment_details?.sources && candidate.context.enrichment_details.sources.length > 0 && (
-                                                                <div className="flex items-center gap-1">
-                                                                    {candidate.context.enrichment_details.sources.includes('pdl') && (
-                                                                        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-700 rounded border border-blue-200 uppercase" title="PDL Enriched">
-                                                                            PDL
-                                                                        </span>
-                                                                    )}
-                                                                    {candidate.context.enrichment_details.sources.includes('perplexity') && (
-                                                                        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 rounded border border-purple-200 uppercase" title="Perplexity Research">
-                                                                            AI
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                        <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                            </svg>
-                                                            {candidate.location || 'Remote'}
-                                                        </div>
+                                const rows = [
+                                    <tr key={`${id}-main`} className="hover:bg-gray-50/80 transition-colors group">
+                                        <td className="px-6 py-5 whitespace-nowrap">
+                                            <div className="flex items-center">
+                                                <div className="flex-shrink-0 h-10 w-10">
+                                                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm ring-2 ring-white ring-offset-2">
+                                                        {candidate.full_name?.charAt(0)}
                                                     </div>
                                                 </div>
-                                            </td>
-                                            <td className="px-6 py-5 whitespace-nowrap">
-                                                <div className="text-sm font-medium text-gray-900">{candidate.current_title || 'Unknown Title'}</div>
-                                                <div className="text-xs text-gray-500 mt-0.5">{candidate.current_company || 'Unknown Company'}</div>
-                                            </td>
-
-                                            {isCurated ? (
-                                                <>
-                                                    <td className="px-6 py-5 whitespace-nowrap">
-                                                        <div className="flex flex-col gap-1.5">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="relative w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                                    <div
-                                                                        className={`absolute top-0 left-0 h-full rounded-full ${candidate.match_score > 75 ? 'bg-green-500' :
-                                                                            candidate.match_score > 50 ? 'bg-amber-500' : 'bg-red-500'
-                                                                            }`}
-                                                                        style={{ width: `${candidate.match_score}%` }}
-                                                                    ></div>
-                                                                </div>
-                                                                <span className="text-sm font-bold text-gray-900">{Math.round(candidate.match_score)}%</span>
-                                                            </div>
-                                                            {/* Show Claude AI score if available */}
-                                                            {candidate.context?.claude_reasoning ? (
-                                                                <div className="text-[10px] text-indigo-600 uppercase tracking-tight font-bold flex items-center gap-1">
-                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                                                                    </svg>
-                                                                    AI: {Math.round(candidate.context.claude_reasoning.overall_score)}% ({Math.round(candidate.context.claude_reasoning.confidence * 100)}% conf)
-                                                                </div>
-                                                            ) : (
-                                                                <div className="text-[10px] text-gray-500 uppercase tracking-tight font-medium">
-                                                                    Confidence: {Math.round(candidate.fit_confidence * 100)}%
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-5">
-                                                        <div className="flex flex-col gap-2">
-                                                            {candidate.context?.warm_path && (
-                                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200 uppercase tracking-wide w-fit">
-                                                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                                        <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.334-.398-1.817a1 1 0 00-1.463-.89c-.334.18-.59.458-.802.756-.212.3-.393.649-.553 1.02-.32.743-.585 1.637-.78 2.533A17.14 17.14 0 006 12a6 6 0 0012 0c0-1.638-.214-3.176-.605-4.553-.194-.684-.447-1.32-.764-1.86a10.151 10.151 0 00-1.026-1.503 9.4 9.4 0 00-.775-.815zM9.383 8.56c.06-.242.13-.487.211-.735.158-.485.342-.924.536-1.327a33.723 33.723 0 01.373-.75c.08.158.136.326.172.503.116.575.148 1.25.101 1.956a1 1 0 00.518.887 2.646 2.646 0 011.054 1.4c.159.49.236 1.045.236 1.606 0 .02-.001.04-.002.059a1 1 0 001.815.54 3.791 3.791 0 00.176-.411 1.64 1.54 0 00.101-.645l-.018-.1c-.02-.1-.043-.198-.07-.294A15.176 15.176 0 0014 12c0 1.105-.895 2-2 2s-2-.895-2-2c0-.528.204-1.01.537-1.37a1 1 0 00.063-1.328 1 1 0 00-.1-.137l-.022-.023c-.345-.375-.58-.85-.637-1.37a1.64 1.64 0 01.024-.54z" clipRule="evenodd" />
-                                                                    </svg>
-                                                                    {candidate.context.warm_path}
-                                                                </span>
-                                                            )}
-                                                            {candidate.context?.why_consider?.[0] && (() => {
-                                                                const rawReason = candidate.context.why_consider[0];
-                                                                const text = typeof rawReason === 'string' ? rawReason : (rawReason.points?.[0] || rawReason.category);
-                                                                const cleanText = stripMarkdown(text);
-                                                                return (
-                                                                    <span className="text-[11px] text-gray-600 leading-relaxed max-w-sm line-clamp-2 italic">
-                                                                        &quot;{cleanText}&quot;
+                                                <div className="ml-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{candidate.full_name}</div>
+                                                        {/* Enrichment indicators */}
+                                                        {isCurated && candidate.context?.enrichment_details?.sources && candidate.context.enrichment_details.sources.length > 0 && (
+                                                            <div className="flex items-center gap-1">
+                                                                {candidate.context.enrichment_details.sources.includes('pdl') && (
+                                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-700 rounded border border-blue-200 uppercase" title="PDL Enriched">
+                                                                        PDL
                                                                     </span>
-                                                                );
-                                                            })()}
-                                                            <button
-                                                                onClick={toggleExpand}
-                                                                className="text-xs text-blue-600 hover:text-blue-800 font-medium text-left w-fit flex items-center gap-1 mt-1"
-                                                            >
-                                                                {isExpanded ? (
-                                                                    <>
-                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                                                                        </svg>
-                                                                        Hide full analysis
-                                                                    </>
-                                                                ) : (
-                                                                    <>
-                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                                                        </svg>
-                                                                        Show full analysis
-                                                                    </>
                                                                 )}
-                                                            </button>
-                                                        </div>
-                                                    </td>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <span className={`px-2.5 py-0.5 inline-flex text-xs leading-4 font-semibold rounded-full capitalize
-                                                        ${candidate.status === 'hired' ? 'bg-green-100 text-green-800' :
-                                                                candidate.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                                                                    candidate.status === 'contacted' ? 'bg-blue-100 text-blue-800' :
-                                                                        'bg-gray-100 text-gray-800'}`}>
-                                                            {candidate.status || 'Sourced'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {candidate.is_from_network && (
-                                                                <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-100">Network</span>
-                                                            )}
-                                                            {candidate.is_from_existing_db && (
-                                                                <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">Import</span>
-                                                            )}
-                                                            {candidate.is_from_people_search && (
-                                                                <span className="px-2 py-0.5 rounded bg-orange-50 text-orange-700 border border-orange-100">Search</span>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </>
-                                            )}
+                                                                {candidate.context.enrichment_details.sources.includes('perplexity') && (
+                                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 rounded border border-purple-200 uppercase" title="Perplexity Research">
+                                                                        AI
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                        </svg>
+                                                        {candidate.location || 'Remote'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-5 whitespace-nowrap">
+                                            <div className="text-sm font-medium text-gray-900">{candidate.current_title || 'Unknown Title'}</div>
+                                            <div className="text-xs text-gray-500 mt-0.5">{candidate.current_company || 'Unknown Company'}</div>
+                                        </td>
 
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                {isCurated ? (
-                                                    <div className="flex gap-2 justify-end">
+                                        {isCurated ? (
+                                            <>
+                                                <td className="px-6 py-5 whitespace-nowrap">
+                                                    <div className="flex flex-col gap-1.5">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="relative w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`absolute top-0 left-0 h-full rounded-full ${candidate.match_score > 75 ? 'bg-green-500' :
+                                                                        candidate.match_score > 50 ? 'bg-amber-500' : 'bg-red-500'
+                                                                        }`}
+                                                                    style={{ width: `${candidate.match_score}%` }}
+                                                                ></div>
+                                                            </div>
+                                                            <span className="text-sm font-bold text-gray-900">{Math.round(candidate.match_score)}%</span>
+                                                        </div>
+                                                        {/* Show Claude AI score if available */}
+                                                        {candidate.context?.claude_reasoning ? (
+                                                            <div className="text-[10px] text-indigo-600 uppercase tracking-tight font-bold flex items-center gap-1">
+                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                                                </svg>
+                                                                AI: {Math.round(candidate.context.claude_reasoning.overall_score)}% ({Math.round(candidate.context.claude_reasoning.confidence * 100)}% conf)
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-[10px] text-gray-500 uppercase tracking-tight font-medium">
+                                                                Confidence: {Math.round(candidate.fit_confidence * 100)}%
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-5">
+                                                    <div className="flex flex-col gap-2">
+                                                        {candidate.context?.warm_path && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200 uppercase tracking-wide w-fit">
+                                                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                                    <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.334-.398-1.817a1 1 0 00-1.463-.89c-.334.18-.59.458-.802.756-.212.3-.393.649-.553 1.02-.32.743-.585 1.637-.78 2.533A17.14 17.14 0 006 12a6 6 0 0012 0c0-1.638-.214-3.176-.605-4.553-.194-.684-.447-1.32-.764-1.86a10.151 10.151 0 00-1.026-1.503 9.4 9.4 0 00-.775-.815zM9.383 8.56c.06-.242.13-.487.211-.735.158-.485.342-.924.536-1.327a33.723 33.723 0 01.373-.75c.08.158.136.326.172.503.116.575.148 1.25.101 1.956a1 1 0 00.518.887 2.646 2.646 0 011.054 1.4c.159.49.236 1.045.236 1.606 0 .02-.001.04-.002.059a1 1 0 001.815.54 3.791 3.791 0 00.176-.411 1.64 1.54 0 00.101-.645l-.018-.1c-.02-.1-.043-.198-.07-.294A15.176 15.176 0 0014 12c0 1.105-.895 2-2 2s-2-.895-2-2c0-.528.204-1.01.537-1.37a1 1 0 00.063-1.328 1 1 0 00-.1-.137l-.022-.023c-.345-.375-.58-.85-.637-1.37a1.64 1.64 0 01.024-.54z" clipRule="evenodd" />
+                                                                </svg>
+                                                                {candidate.context.warm_path}
+                                                            </span>
+                                                        )}
+                                                        {candidate.context?.why_consider?.[0] && (() => {
+                                                            const rawReason = candidate.context.why_consider[0];
+                                                            const text = typeof rawReason === 'string' ? rawReason : (rawReason.points?.[0] || rawReason.category);
+                                                            const cleanText = stripMarkdown(text);
+                                                            return (
+                                                                <span className="text-[11px] text-gray-600 leading-relaxed max-w-sm line-clamp-2 italic">
+                                                                    &quot;{cleanText}&quot;
+                                                                </span>
+                                                            );
+                                                        })()}
                                                         <button
-                                                            onClick={() => handleApprove(candidate)}
-                                                            className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors font-medium shadow-sm"
+                                                            onClick={toggleExpand}
+                                                            className="text-xs text-blue-600 hover:text-blue-800 font-medium text-left w-fit flex items-center gap-1 mt-1"
                                                         >
-                                                            ✓ Yes
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleReject(candidate)}
-                                                            className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors font-medium shadow-sm"
-                                                        >
-                                                            ✗ No
+                                                            {isExpanded ? (
+                                                                <>
+                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                                                    </svg>
+                                                                    Hide full analysis
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                                    </svg>
+                                                                    Show full analysis
+                                                                </>
+                                                            )}
                                                         </button>
                                                     </div>
-                                                ) : (
-                                                    <button className="text-blue-600 hover:text-blue-900 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors">
-                                                        View Profile
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <span className={`px-2.5 py-0.5 inline-flex text-xs leading-4 font-semibold rounded-full capitalize
+                                                    ${candidate.status === 'hired' ? 'bg-green-100 text-green-800' :
+                                                            candidate.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                                candidate.status === 'contacted' ? 'bg-blue-100 text-blue-800' :
+                                                                    'bg-gray-100 text-gray-800'}`}>
+                                                        {candidate.status || 'Sourced'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {candidate.is_from_network && (
+                                                            <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-100">Network</span>
+                                                        )}
+                                                        {candidate.is_from_existing_db && (
+                                                            <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">Import</span>
+                                                        )}
+                                                        {candidate.is_from_people_search && (
+                                                            <span className="px-2 py-0.5 rounded bg-orange-50 text-orange-700 border border-orange-100">Search</span>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </>
+                                        )}
+
+                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                            {isCurated ? (
+                                                <div className="flex gap-2 justify-end">
+                                                    <button
+                                                        onClick={() => handleApprove(candidate)}
+                                                        className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors font-medium shadow-sm"
+                                                    >
+                                                        ✓ Yes
                                                     </button>
-                                                )}
-                                            </td>
-                                            {/* Expanded Analysis Row */}
-                                            {isCurated && isExpanded && (
-                                                <tr className="bg-gray-50">
-                                                    <td colSpan={5} className="p-0">
-                                                        <CandidateDetailedAnalysis candidate={candidate} />
-                                                    </td>
-                                                </tr>
+                                                    <button
+                                                        onClick={() => handleReject(candidate)}
+                                                        className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors font-medium shadow-sm"
+                                                    >
+                                                        ✗ No
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <button className="text-blue-600 hover:text-blue-900 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors">
+                                                    View Profile
+                                                </button>
                                             )}
-                                    </div>
-                                );
+                                        </td>
+                                    </tr>
+                                ];
+
+                                if (isCurated && isExpanded) {
+                                    rows.push(
+                                        <tr key={`${id}-expanded`} className="bg-gray-50">
+                                            <td colSpan={5} className="p-0">
+                                                <CandidateDetailedAnalysis candidate={candidate} />
+                                            </td>
+                                        </tr>
+                                    );
+                                }
+
+                                return rows;
                             })}
                         </tbody>
                     </table>
