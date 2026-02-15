@@ -79,11 +79,59 @@ class CandidateBuilder:
         return candidate
 
     async def build_many(self, person_ids: list[str]) -> list[UnifiedCandidate]:
-        """Build multiple candidates in batch."""
+        """Build multiple candidates in batch (optimized)."""
+        if not person_ids:
+            return []
+
+        # Fetch all people in one query
+        people_response = self.supabase.table('people')\
+            .select('*')\
+            .in_('id', person_ids)\
+            .execute()
+
+        # Fetch all enrichments in one query
+        enrichments_response = self.supabase.table('person_enrichments')\
+            .select('*')\
+            .in_('person_id', person_ids)\
+            .execute()
+
+        # Index enrichments by person_id for quick lookup
+        enrichments_by_id = {
+            e['person_id']: e
+            for e in enrichments_response.data
+        } if enrichments_response.data else {}
+
+        # Build candidates
         candidates = []
-        for person_id in person_ids:
-            candidate = await self.build(person_id)
+        for person in people_response.data:
+            enrichment = enrichments_by_id.get(person['id'])
+
+            candidate = UnifiedCandidate(
+                person_id=person['id'],
+                full_name=person['full_name'],
+                email=person.get('email'),
+                linkedin_url=person.get('linkedin_url'),
+                github_url=person.get('github_url'),
+                headline=person.get('headline'),
+                location=person.get('location'),
+                current_company=person.get('current_company'),
+                current_title=person.get('current_title'),
+
+                # From enrichment (empty if not enriched)
+                skills=self._extract_skills(enrichment),
+                experience=self._extract_experience(enrichment),
+                education=self._extract_education(enrichment),
+                projects=self._extract_projects(enrichment),
+
+                # Metadata
+                enrichment_source=enrichment.get('enrichment_source') if enrichment else None,
+                has_enrichment=enrichment is not None
+            )
+
+            # Calculate completeness
+            candidate.data_completeness = candidate.calculate_completeness()
             candidates.append(candidate)
+
         return candidates
 
     def _extract_skills(self, enrichment: Optional[dict]) -> list[str]:

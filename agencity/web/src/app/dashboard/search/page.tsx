@@ -3,10 +3,10 @@
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  searchCandidates,
+  unifiedSearch,
   getRoles,
-  type SearchResults,
-  type SearchCandidate,
+  type UnifiedSearchResponse,
+  type UnifiedCandidate,
   type Role,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -37,7 +37,7 @@ function SearchPageContent() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
   const [customQuery, setCustomQuery] = useState<string>('');
-  const [results, setResults] = useState<SearchResults | null>(null);
+  const [results, setResults] = useState<UnifiedSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,8 +48,8 @@ function SearchPageContent() {
       if (saved) {
         try {
           const state = JSON.parse(saved);
-          if (state.companyId) {
-            setCompanyId(state.companyId);
+          if (state.company?.id) {
+            setCompanyId(state.company.id);
           }
         } catch {
           // ignore
@@ -104,8 +104,9 @@ function SearchPageContent() {
     setError(null);
 
     try {
-      const searchResults = await searchCandidates(companyId, {
-        query: searchQuery,
+      const searchResults = await unifiedSearch({
+        companyId,
+        roleTitle: searchQuery,
         limit: 50,
       });
       setResults(searchResults);
@@ -123,6 +124,12 @@ function SearchPageContent() {
       </div>
     );
   }
+
+  // Group candidates by tier for display
+  const tier1 = results?.candidates.filter(c => c.tier === 1) || [];
+  const tier2 = results?.candidates.filter(c => c.tier === 2) || [];
+  const tier3 = results?.candidates.filter(c => c.tier === 3) || [];
+  const tier4 = results?.candidates.filter(c => c.tier === 4) || [];
 
   return (
     <div className="space-y-6">
@@ -144,7 +151,7 @@ function SearchPageContent() {
               <option value="">Choose a role...</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>
-                  {role.title} {role.level && `(${role.level})`}
+                  {String(role.title)} {role.level && `(${String(role.level)})`}
                 </option>
               ))}
             </select>
@@ -194,85 +201,69 @@ function SearchPageContent() {
           {/* Summary */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Found {results.total_candidates} candidates for &quot;{results.search_target}&quot;
+              Found {results.total_found} candidates for &quot;{results.role_title}&quot;
             </h3>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="text-center p-4 bg-green-50 rounded-lg">
-                <div className="text-2xl font-bold text-green-600">{results.tier_1_count}</div>
+                <div className="text-2xl font-bold text-green-600">{results.tier_1_network}</div>
                 <div className="text-sm text-gray-600">In Network</div>
               </div>
               <div className="text-center p-4 bg-blue-50 rounded-lg">
-                <div className="text-2xl font-bold text-blue-600">{results.tier_2_count}</div>
+                <div className="text-2xl font-bold text-blue-600">{results.tier_2_warm}</div>
                 <div className="text-sm text-gray-600">Warm Intros</div>
               </div>
-              <div className="text-center p-4 bg-orange-50 rounded-lg">
-                <div className="text-2xl font-bold text-orange-600">{results.tier_3_count}</div>
-                <div className="text-sm text-gray-600">Recruiters</div>
-              </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
-                <div className="text-2xl font-bold text-gray-600">{results.tier_4_count}</div>
-                <div className="text-sm text-gray-600">Cold</div>
+                <div className="text-2xl font-bold text-gray-600">{results.tier_3_cold}</div>
+                <div className="text-sm text-gray-600">Cold / Other</div>
               </div>
             </div>
-            {results.primary_recommendation && (
-              <p className="mt-4 text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
-                {results.primary_recommendation}
-              </p>
-            )}
+            <div className="mt-4 text-xs text-gray-400 text-center">
+              Search took {results.search_duration_seconds.toFixed(2)}s
+            </div>
           </div>
 
           {/* Tier 1: Network */}
-          {results.tier_1_network && results.tier_1_network.length > 0 && (
+          {tier1.length > 0 && (
             <CandidateTier
               title="Direct Network"
               subtitle="People you know directly"
-              candidates={results.tier_1_network}
+              candidates={tier1}
               tierColor="green"
               tierBadge="NETWORK"
             />
           )}
 
           {/* Tier 2: Warm Intros */}
-          {results.tier_2_one_intro && results.tier_2_one_intro.length > 0 && (
+          {tier2.length > 0 && (
             <CandidateTier
               title="Warm Introductions"
               subtitle="One intro away from your network"
-              candidates={results.tier_2_one_intro}
+              candidates={tier2}
               tierColor="blue"
               tierBadge="WARM"
             />
           )}
 
-          {/* Tier 3: Recruiters */}
-          {results.tier_3_recruiters && results.tier_3_recruiters.length > 0 && (
-            <CandidateTier
-              title="Recruiters in Your Network"
-              subtitle="Ask them for referrals"
-              candidates={results.tier_3_recruiters}
-              tierColor="orange"
-              tierBadge="RECRUITER"
-            />
-          )}
-
-          {/* Tier 4: Cold */}
-          {results.tier_4_cold && results.tier_4_cold.length > 0 && (
+          {/* Tier 3: Cold / Others (Unified maps cold to tier 3 usually) */}
+          {tier3.length > 0 && (
             <CandidateTier
               title="Cold Outreach"
               subtitle="No direct connection"
-              candidates={results.tier_4_cold}
+              candidates={tier3}
               tierColor="gray"
               tierBadge="COLD"
             />
           )}
 
-          {/* Recruiter Recommendation */}
-          {results.recruiter_recommendation && (
-            <div className="bg-gradient-to-r from-orange-50 to-yellow-50 rounded-xl border border-orange-200 p-6">
-              <h3 className="text-lg font-semibold text-orange-900 mb-2">
-                Recruiter Tip
-              </h3>
-              <p className="text-orange-800">{results.recruiter_recommendation}</p>
-            </div>
+          {/* Tier 4: Fallback if any */}
+          {tier4.length > 0 && (
+            <CandidateTier
+              title="Others"
+              subtitle="Additional matches"
+              candidates={tier4}
+              tierColor="gray"
+              tierBadge="OTHER"
+            />
           )}
         </div>
       )}
@@ -290,7 +281,7 @@ function CandidateTier({
 }: {
   title: string;
   subtitle: string;
-  candidates: SearchCandidate[];
+  candidates: UnifiedCandidate[];
   tierColor: 'purple' | 'green' | 'blue' | 'orange' | 'gray';
   tierBadge: string;
 }) {
@@ -335,7 +326,7 @@ function CandidateTier({
       {expanded && (
         <div className="divide-y divide-gray-100">
           {candidates.map((candidate) => (
-            <CandidateCard key={candidate.id} candidate={candidate} tierColor={tierColor} />
+            <CandidateCard key={candidate.id} candidate={candidate} />
           ))}
         </div>
       )}
@@ -346,10 +337,8 @@ function CandidateTier({
 // Candidate Card Component
 function CandidateCard({
   candidate,
-  tierColor,
 }: {
-  candidate: SearchCandidate;
-  tierColor: string;
+  candidate: UnifiedCandidate;
 }) {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -366,11 +355,6 @@ function CandidateCard({
           <div>
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-900">{candidate.full_name}</span>
-              {candidate.is_recruiter && (
-                <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs rounded">
-                  Recruiter
-                </span>
-              )}
             </div>
             <div className="text-sm text-gray-600">
               {candidate.current_title}
@@ -380,10 +364,10 @@ function CandidateCard({
               <div className="text-xs text-gray-500 mt-1">{candidate.location}</div>
             )}
 
-            {/* Match Reasons */}
-            {candidate.match_reasons && candidate.match_reasons.length > 0 && (
+            {/* Why Consider (Match Reasons) */}
+            {candidate.why_consider && candidate.why_consider.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {candidate.match_reasons.slice(0, 3).map((reason, i) => (
+                {candidate.why_consider.slice(0, 3).map((reason, i) => (
                   <span key={i} className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">
                     {reason}
                   </span>
@@ -391,21 +375,10 @@ function CandidateCard({
               </div>
             )}
 
-            {/* Readiness Signals */}
-            {candidate.readiness_signals && candidate.readiness_signals.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1">
-                {candidate.readiness_signals.slice(0, 2).map((signal, i) => (
-                  <span key={i} className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">
-                    {signal}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Action */}
-            {candidate.action && (
-              <div className="mt-2 text-xs font-medium text-purple-600">
-                {candidate.action}
+            {/* Warm Path Info */}
+            {candidate.has_warm_path && candidate.warm_path_connector && (
+              <div className="mt-2 text-xs font-medium text-blue-600">
+                via {candidate.warm_path_connector} ({candidate.warm_path_relationship || 'Connection'})
               </div>
             )}
           </div>
@@ -416,8 +389,8 @@ function CandidateCard({
           {/* Scores */}
           <div className="text-right">
             <div className="flex items-center gap-2">
-              <ScoreBadge label="Warmth" score={candidate.warmth_score} />
-              <ScoreBadge label="Ready" score={candidate.readiness_score} />
+              <ScoreBadge label="Match" score={candidate.fit_score / 100} />
+              {candidate.warmth_score > 0 && <ScoreBadge label="Warmth" score={candidate.warmth_score / 100} />}
             </div>
           </div>
 
@@ -461,17 +434,27 @@ function CandidateCard({
       {showDetails && (
         <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4 text-sm">
           <div>
-            <span className="text-gray-500">Headline:</span>
-            <span className="ml-2 text-gray-900">{candidate.headline || 'N/A'}</span>
+            <span className="text-gray-500">Source:</span>
+            <span className="ml-2 text-gray-900">{candidate.source}</span>
           </div>
           <div>
             <span className="text-gray-500">Combined Score:</span>
-            <span className="ml-2 text-gray-900">{candidate.combined_score ? `${(candidate.combined_score * 100).toFixed(0)}%` : 'N/A'}</span>
+            <span className="ml-2 text-gray-900">{candidate.combined_score ? `${(candidate.combined_score).toFixed(0)}` : 'N/A'}</span>
           </div>
-          {candidate.recruiter_signals && candidate.recruiter_signals.length > 0 && (
+          {candidate.intro_message && (
+            <div className="col-span-2 bg-blue-50 p-3 rounded">
+              <span className="text-xs font-bold text-blue-700 block mb-1">DRAFT INTRO:</span>
+              <p className="text-blue-900 italic">&quot;{candidate.intro_message}&quot;</p>
+            </div>
+          )}
+          {candidate.research_highlights && candidate.research_highlights.length > 0 && (
             <div className="col-span-2">
-              <span className="text-gray-500">Recruiter Signals:</span>
-              <span className="ml-2 text-gray-900">{candidate.recruiter_signals.join(', ')}</span>
+              <span className="text-gray-500 block mb-1">Research Highlights:</span>
+              <ul className="list-disc pl-5 space-y-1">
+                {candidate.research_highlights.map((h, i) => (
+                  <li key={i} className="text-gray-900">{h}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -486,8 +469,8 @@ function ScoreBadge({ label, score }: { label: string; score?: number }) {
   const percentage = Math.round(score * 100);
   const color =
     percentage >= 70 ? 'text-green-600 bg-green-50' :
-    percentage >= 40 ? 'text-yellow-600 bg-yellow-50' :
-    'text-gray-600 bg-gray-50';
+      percentage >= 40 ? 'text-yellow-600 bg-yellow-50' :
+        'text-gray-600 bg-gray-50';
 
   return (
     <div className={`px-2 py-1 rounded text-xs font-medium ${color}`} title={label}>

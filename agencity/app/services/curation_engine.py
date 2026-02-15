@@ -16,12 +16,18 @@ from app.models.curation import (
     CuratedCandidate,
     CandidateContext,
     WhyConsiderPoint,
-    MatchStrength
+    MatchStrength,
+    EnrichmentDetails,
+    ClaudeReasoning,
+    AgentScore,
+    ResearchHighlight
 )
 from app.services.candidate_builder import CandidateBuilder
 from app.services.research.perplexity_researcher import DeepResearchEngine
+from app.services.external_search.pdl_client import PDLClient
 from app.config import settings
 import re
+from datetime import datetime, timedelta
 
 
 class CandidateCurationEngine:
@@ -55,28 +61,30 @@ class CandidateCurationEngine:
         6. Build rich context for final shortlist
         """
 
-        print(f"\n{'='*60}")
-        print(f"🎯 Starting curation for role {role_id}")
-
         # Get role and company context
         role = await self._get_role(role_id)
         company_dna = await self._get_company_dna(company_id)
         umo = await self._get_umo(company_id)
 
+        print(f"\n{'='*60}")
+        print(f"🎯 Starting Candidate Curation")
         print(f"📋 Role: {role.get('title', 'Unknown')}")
         print(f"🏢 Company: {company_dna.get('name', 'Unknown')}")
+        print(f"{'='*60}")
 
         # 1. Get all network candidates
         network_people = await self._get_network_people(company_id)
-        print(f"📊 Searching {len(network_people)} network connections")
+        print(f"📊 Searching {len(network_people)} network connections...")
 
-        # 2. Build unified candidates and calculate fit
+        # 2. Build unified candidates in BATCH
+        person_ids = [p['id'] for p in network_people]
+        candidates = await self.builder.build_many(person_ids)
+        print(f"✅ Loaded {len(candidates)} candidate profiles")
+
+        # 3. Calculate fit for each candidate
         ranked_candidates = []
 
-        for person in network_people:
-            # Build unified candidate (handles incomplete data)
-            candidate = await self.builder.build(person['id'])
-
+        for candidate in candidates:
             # Calculate fit score
             fit = self._calculate_fit(candidate, role, company_dna, umo)
 
@@ -88,34 +96,58 @@ class CandidateCurationEngine:
                 'needs_enrichment': fit.needs_enrichment
             })
 
-        # 3. Initial ranking
+        # 4. Initial ranking
         ranked_candidates.sort(key=lambda x: x['fit_score'], reverse=True)
 
-        top_score = ranked_candidates[0]['fit_score'] if ranked_candidates else 0
-        print(f"📈 Top candidate score: {top_score:.1f}")
-        print(f"🎲 Average confidence: {sum(c['confidence'] for c in ranked_candidates) / len(ranked_candidates):.2f}")
+        print(f"\n{'-'*60}")
+        print(f"📈 Rule-based Top Score: {top_score:.1f} | Avg Conf: {sum(c['confidence'] for c in ranked_candidates) / len(ranked_candidates):.2f}")
 
-        # 4. Enrich top candidates with low confidence
-        top_30 = ranked_candidates[:30]
-        to_enrich = [c for c in top_30 if c['needs_enrichment']]
+        # 5. Enrich TOP 5 candidates with PDL
+        top_5 = ranked_candidates[:5]
+        to_enrich = [c for c in top_5 if c['candidate'].linkedin_url]
 
         if to_enrich:
-            print(f"🔍 Enriching {len(to_enrich)} candidates for better accuracy...")
-            # Note: Actual enrichment would call PDL API here
-            # For now, just mark as attempted
-            for item in to_enrich:
-                item['enrichment_attempted'] = True
+            print(f"🔍 Enriching top {len(to_enrich)} candidates via PDL...")
+            enriched_count = await self._enrich_candidates_pdl_only(to_enrich)
+            print(f"✅ Enriched {enriched_count}/{len(to_enrich)} candidates")
 
-        # 4.5. Deep research on top 5 candidates using Perplexity
+            for item in to_enrich:
+                item['candidate'] = await self.builder.build(item['candidate'].person_id)
+                item['was_enriched'] = True
+
+        # 6. Claude reasoning on enriched candidates
+        if to_enrich and enriched_count > 0:
+            print(f"🧠 Analyzing deep insights with Claude...")
+            claude_scored_candidates = await self._score_with_claude_reasoning(
+                to_enrich,
+                role,
+                company_dna,
+                umo
+            )
+
+            for item in claude_scored_candidates:
+                for ranked_item in ranked_candidates:
+                    if ranked_item['candidate'].person_id == item['candidate'].person_id:
+                        ranked_item['final_score'] = (item['claude_score'] * 0.7) + (item['fit_score'] * 0.3)
+                        ranked_item['claude_score'] = item['claude_score']
+                        ranked_item['claude_confidence'] = item['claude_confidence']
+                        ranked_item['claude_reasoning'] = item.get('claude_reasoning')
+                        break
+
+            ranked_candidates.sort(key=lambda x: x.get('final_score', x['fit_score']), reverse=True)
+            new_top = ranked_candidates[0].get('final_score', ranked_candidates[0]['fit_score'])
+            print(f"✨ Re-ranked. New Top Score: {new_top:.1f}")
+
+        # 7. Deep research on top 5 candidates using Perplexity
         if settings.perplexity_api_key:
-            top_5 = ranked_candidates[:5]
-            print(f"🔬 Running deep research on top {len(top_5)} candidates...")
+            final_top_5 = ranked_candidates[:5]
+            print(f"🔬 Running deep research on top {len(final_top_5)} candidates...")
 
             research_engine = DeepResearchEngine(settings.perplexity_api_key)
 
             try:
                 # Extract candidates for research
-                candidates_to_research = [item['candidate'] for item in top_5]
+                candidates_to_research = [item['candidate'] for item in final_top_5]
 
                 # Run deep research
                 enhanced_candidates = await research_engine.enhance_candidates(
@@ -127,22 +159,37 @@ class CandidateCurationEngine:
 
                 # Update candidates with research insights
                 for i, enhanced in enumerate(enhanced_candidates):
-                    top_5[i]['candidate'] = enhanced
-                    top_5[i]['has_deep_research'] = True
+                    final_top_5[i]['candidate'] = enhanced
+                    final_top_5[i]['has_deep_research'] = True
 
             except Exception as e:
                 print(f"⚠️  Deep research failed: {e}")
                 # Continue without deep research
 
-        # 5. Build rich context for final shortlist
+        # 8. Build rich context for final shortlist
         shortlist = []
 
         for item in ranked_candidates[:limit]:
+            # Build enrichment details
+            enrichment_details = self._build_enrichment_details(item['candidate'])
+
+            # Build Claude reasoning if available
+            claude_reasoning = None
+            if item.get('claude_reasoning'):
+                claude_reasoning = self._build_claude_reasoning_details(
+                    item.get('claude_score', item['fit_score']),
+                    item.get('claude_confidence', item['confidence']),
+                    item['claude_reasoning'],
+                    item['fit_score']
+                )
+
             context = await self._build_context(
                 item['candidate'],
                 role,
                 company_dna,
-                umo
+                umo,
+                enrichment_details=enrichment_details,
+                claude_reasoning=claude_reasoning
             )
 
             curated = CuratedCandidate(
@@ -154,16 +201,17 @@ class CandidateCurationEngine:
                 current_title=item['candidate'].current_title,
                 linkedin_url=item['candidate'].linkedin_url,
                 github_url=item['candidate'].github_url,
-                match_score=item['fit_score'],
+                match_score=item.get('final_score', item['fit_score']),
                 fit_confidence=item['confidence'],
                 context=context,
-                was_enriched=item.get('enrichment_attempted', False),
+                was_enriched=item.get('was_enriched', False),
                 data_completeness=item['candidate'].data_completeness
             )
 
             shortlist.append(curated)
 
-        print(f"✅ Curated shortlist of {len(shortlist)} candidates")
+        print(f"\n{'-'*60}")
+        print(f"✅ Curation complete: {len(shortlist)} candidates shortlisted")
         print(f"{'='*60}\n")
 
         return shortlist
@@ -432,7 +480,9 @@ class CandidateCurationEngine:
         candidate: UnifiedCandidate,
         role: dict,
         company_dna: dict,
-        umo: Optional[dict]
+        umo: Optional[dict],
+        enrichment_details: Optional[EnrichmentDetails] = None,
+        claude_reasoning: Optional[ClaudeReasoning] = None
     ) -> CandidateContext:
         """
         Build rich context for founder decision.
@@ -598,20 +648,15 @@ class CandidateCurationEngine:
             why_consider=why_consider,
             unknowns=unknowns,
             standout_signal=standout_signal,
-            warm_path=warm_path
+            warm_path=warm_path,
+            enrichment_details=enrichment_details,
+            claude_reasoning=claude_reasoning
         )
 
     def _parse_research_insights(self, raw_research: str, role: dict) -> Dict[str, Any]:
         """
         Parse Perplexity research response into structured insights.
-
-        Returns dict with:
-        - technical_skills: List of specific technical skills found
-        - achievements: List of notable achievements
-        - online_presence: List of online activities/contributions
-        - standout: Single standout signal
         """
-
         insights = {
             'technical_skills': [],
             'achievements': [],
@@ -619,32 +664,36 @@ class CandidateCurationEngine:
             'standout': None
         }
 
-        # Simple parsing for now - look for key indicators
+        def clean_line(text: str) -> str:
+            # Remove markdown headers, bolding, and list chars
+            cleaned = re.sub(r'#{1,6}\s?', '', text)
+            cleaned = cleaned.replace('**', '').replace('*', '')
+            cleaned = cleaned.strip(' -•*>')
+            return cleaned
+
         lines = raw_research.split('\n')
-
         for line in lines:
-            line_lower = line.lower().strip()
-
-            # Skip empty lines
-            if not line_lower:
+            line_clean = clean_line(line)
+            if not line_clean or len(line_clean) < 5:
                 continue
 
+            line_lower = line_clean.lower()
+
             # Technical skills
-            if any(keyword in line_lower for keyword in ['github', 'repository', 'programming', 'framework', 'language']):
+            if any(kw in line_lower for kw in ['programming', 'framework', 'language', 'stack', 'aws', 'python', 'javascript', 'typescript', 'rust', 'go']):
                 if len(insights['technical_skills']) < 5:
-                    insights['technical_skills'].append(line.strip(' -•*'))
+                    insights['technical_skills'].append(line_clean)
 
             # Achievements
-            elif any(keyword in line_lower for keyword in ['won', 'award', 'published', 'hackathon', 'competition', 'founder', 'created']):
+            elif any(kw in line_lower for kw in ['won', 'award', 'published', 'hackathon', 'founder', 'created', 'built', 'led']):
                 if len(insights['achievements']) < 5:
-                    insights['achievements'].append(line.strip(' -•*'))
+                    insights['achievements'].append(line_clean)
 
             # Online presence
-            elif any(keyword in line_lower for keyword in ['blog', 'article', 'stackoverflow', 'twitter', 'linkedin', 'medium']):
+            elif any(kw in line_lower for kw in ['blog', 'article', 'stackoverflow', 'twitter', 'linkedin', 'medium', 'open source']):
                 if len(insights['online_presence']) < 5:
-                    insights['online_presence'].append(line.strip(' -•*'))
+                    insights['online_presence'].append(line_clean)
 
-        # Find standout signal - first achievement or notable project
         if insights['achievements']:
             insights['standout'] = insights['achievements'][0]
         elif insights['technical_skills']:
@@ -696,6 +745,249 @@ class CandidateCurationEngine:
 
         return None
 
+    async def _enrich_candidates_pdl_only(self, candidates_to_enrich: List[dict]) -> int:
+        """
+        Enrich candidates using PDL ONLY (no RapidAPI).
+
+        Strategy:
+        - Enrich top 5 candidates at a time
+        - Skip if enrichment exists AND is < 30 days old
+        - Only use PDL (~$0.10 per enrichment)
+
+        Returns count of successfully enriched candidates.
+        """
+        enriched_count = 0
+        cache_hits = 0
+        total_cost = 0.0
+
+        # Initialize PDL client
+        if not settings.pdl_api_key:
+            print("⚠️  PDL API key not configured - skipping enrichment")
+            return 0
+
+        pdl_client = PDLClient(api_key=settings.pdl_api_key)
+
+        for item in candidates_to_enrich:
+            candidate = item['candidate']
+            person_id = candidate.person_id
+            linkedin_url = candidate.linkedin_url
+
+            if not linkedin_url:
+                print(f"  ⏭️  Skipping {candidate.full_name} (no LinkedIn URL)")
+                continue
+
+            # Check if enrichment already exists and is fresh
+            existing = await self._get_enrichment(person_id)
+            if existing:
+                updated_at = existing.get('updated_at')
+                if updated_at:
+                    # Parse timestamp
+                    if isinstance(updated_at, str):
+                        updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+
+                    age_days = (datetime.now(updated_at.tzinfo) - updated_at).days
+
+                    if age_days < 30:
+                        print(f"  ✓ {candidate.full_name} (cached, {age_days}d old)")
+                        # Update candidate with existing enrichment
+                        self._apply_enrichment(candidate, existing)
+                        item['was_enriched'] = True
+                        cache_hits += 1
+                        continue
+
+            # Enrich with PDL
+            print(f"  🔍 Enriching {candidate.full_name} via PDL...")
+            pdl_profile = await pdl_client.enrich_profile(linkedin_url)
+
+            if pdl_profile:
+                # Convert PDL format to our format
+                enrichment_data = {
+                    'skills': pdl_profile.skills,
+                    'experience': pdl_profile.experience,
+                    'education': pdl_profile.education,
+                    'headline': pdl_profile.headline,
+                    'location': pdl_profile.location
+                }
+
+                # Store enrichment in database
+                await self._store_enrichment(person_id, enrichment_data, 'pdl')
+
+                # Apply enrichment to candidate
+                self._apply_enrichment(candidate, enrichment_data)
+
+                # Recalculate completeness
+                candidate.data_completeness = candidate.calculate_completeness()
+
+                enriched_count += 1
+                total_cost += 0.10  # PDL cost per enrichment
+                item['was_enriched'] = True
+
+                print(f"    ✓ Success ($0.10)")
+            else:
+                print(f"    ✗ Failed to enrich {candidate.full_name}")
+
+        if enriched_count > 0:
+            print(f"💰 Total enrichment cost: ${total_cost:.2f} ({cache_hits} cache hits)")
+
+        return enriched_count
+
+    async def _score_with_claude_reasoning(
+        self,
+        candidates: List[dict],
+        role: dict,
+        company_dna: dict,
+        umo: Optional[dict]
+    ) -> List[dict]:
+        """
+        Use Claude reasoning engine to re-score enriched candidates.
+
+        Uses Agent Swarm pattern (Skill, Trajectory, Fit, Timing agents).
+
+        Returns candidates with added fields:
+        - claude_score: 0-100 score from Claude
+        - claude_confidence: 0-1 confidence
+        - claude_reasoning: dict with agent breakdowns
+        """
+        from app.services.reasoning.claude_engine import claude_engine
+
+        if not settings.anthropic_api_key:
+            print("⚠️  Claude API key not configured - using rule-based scores only")
+            for item in candidates:
+                item['claude_score'] = item['fit_score']
+                item['claude_confidence'] = item['confidence']
+            return candidates
+
+        # Prepare candidates for Claude analysis
+        candidate_dicts = []
+        for item in candidates:
+            c = item['candidate']
+            candidate_dicts.append({
+                'id': c.person_id,
+                'full_name': c.full_name,
+                'current_title': c.current_title,
+                'current_company': c.current_company,
+                'headline': c.headline,
+                'location': c.location,
+                'skills': c.skills,
+                'experience': c.experience,
+                'education': c.education,
+                'linkedin_url': c.linkedin_url,
+                'github_url': c.github_url
+            })
+
+        # Run Claude analysis in batch
+        try:
+            analyses = await claude_engine.analyze_candidates_batch(
+                candidates=candidate_dicts,
+                role_title=role.get('title', ''),
+                required_skills=role.get('required_skills', []),
+                company_context={
+                    'stage': company_dna.get('stage', 'early'),
+                    'size': company_dna.get('employee_count', 'small'),
+                    'culture': umo.get('culture_description', 'fast-moving startup') if umo else 'fast-moving startup'
+                },
+                max_concurrent=3  # Conservative rate limiting
+            )
+
+            # Map analyses back to candidates
+            for item, analysis in zip(candidates, analyses):
+                # Calculate overall Claude score (weighted average of agent scores)
+                # Weights: Skills 40%, Trajectory 30%, Fit 20%, Timing 10%
+                claude_score = (
+                    analysis.skill_score * 0.4 +
+                    analysis.trajectory_score * 0.3 +
+                    analysis.fit_score * 0.2 +
+                    analysis.timing_score * 0.1
+                )
+
+                item['claude_score'] = claude_score
+                item['claude_confidence'] = analysis.confidence
+                item['claude_reasoning'] = {
+                    'skill': {'score': analysis.skill_score, 'reasoning': analysis.skill_reasoning},
+                    'trajectory': {'score': analysis.trajectory_score, 'reasoning': analysis.trajectory_reasoning},
+                    'fit': {'score': analysis.fit_score, 'reasoning': analysis.fit_reasoning},
+                    'timing': {'score': analysis.timing_score, 'reasoning': analysis.timing_reasoning}
+                }
+
+                print(f"  🧠 {item['candidate'].full_name}: Claude={claude_score:.1f} (S={analysis.skill_score:.0f}, T={analysis.trajectory_score:.0f}, F={analysis.fit_score:.0f})")
+
+        except Exception as e:
+            print(f"⚠️  Claude reasoning failed: {e}")
+            # Fallback to rule-based scores
+            for item in candidates:
+                item['claude_score'] = item['fit_score']
+                item['claude_confidence'] = item['confidence']
+
+        return candidates
+
+    def _apply_enrichment(self, candidate: UnifiedCandidate, enrichment_data: dict):
+        """Apply enrichment data to a candidate object."""
+        if 'skills' in enrichment_data and enrichment_data['skills']:
+            candidate.skills = enrichment_data['skills']
+
+        if 'experience' in enrichment_data and enrichment_data['experience']:
+            candidate.experience = enrichment_data['experience']
+
+        if 'education' in enrichment_data and enrichment_data['education']:
+            candidate.education = enrichment_data['education']
+
+        if 'headline' in enrichment_data and enrichment_data['headline']:
+            candidate.headline = enrichment_data['headline']
+
+        if 'location' in enrichment_data and enrichment_data['location']:
+            candidate.location = enrichment_data['location']
+
+        candidate.has_enrichment = True
+        candidate.enrichment_source = enrichment_data.get('enrichment_source', 'unknown')
+
+    async def _get_enrichment(self, person_id: str) -> Optional[dict]:
+        """Get existing enrichment for a person."""
+        try:
+            response = self.supabase.table('person_enrichments')\
+                .select('*')\
+                .eq('person_id', person_id)\
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+        except Exception as e:
+            print(f"⚠️  Error fetching enrichment: {e}")
+
+        return None
+
+    async def _store_enrichment(self, person_id: str, enrichment_data: dict, source: str):
+        """Store enrichment data in database."""
+        try:
+            # Check if enrichment already exists
+            existing = await self._get_enrichment(person_id)
+
+            payload = {
+                'person_id': person_id,
+                'skills': enrichment_data.get('skills', []),
+                'experience': enrichment_data.get('experience', []),
+                'education': enrichment_data.get('education', []),
+                'certifications': enrichment_data.get('certifications', []),
+                'enrichment_source': source,
+                'updated_at': datetime.utcnow().isoformat()
+            }
+
+            if existing:
+                # Update existing
+                self.supabase.table('person_enrichments')\
+                    .update(payload)\
+                    .eq('person_id', person_id)\
+                    .execute()
+            else:
+                # Insert new
+                payload['created_at'] = datetime.utcnow().isoformat()
+                self.supabase.table('person_enrichments')\
+                    .insert(payload)\
+                    .execute()
+
+            print(f"    💾 Stored enrichment (source: {source})")
+        except Exception as e:
+            print(f"    ⚠️  Error storing enrichment: {e}")
+
     # Database helpers
 
     async def _get_network_people(self, company_id: str) -> List[dict]:
@@ -735,3 +1027,91 @@ class CandidateCurationEngine:
             .execute()
 
         return response.data[0] if response.data else None
+
+    def _build_enrichment_details(self, candidate: UnifiedCandidate) -> Optional[EnrichmentDetails]:
+        """Build enrichment details from candidate data."""
+        if not candidate.has_enrichment and not hasattr(candidate, 'deep_research'):
+            return None
+
+        sources = []
+        pdl_fields = []
+        research_highlights = []
+
+        # Check PDL enrichment
+        if candidate.has_enrichment:
+            sources.append('pdl')
+            # Determine which fields were enriched by PDL
+            if candidate.skills:
+                pdl_fields.append('skills')
+            if candidate.experience:
+                pdl_fields.append('experience')
+            if candidate.education:
+                pdl_fields.append('education')
+
+        # Check Perplexity research
+        if hasattr(candidate, 'deep_research') and candidate.deep_research:
+            sources.append('perplexity')
+            research = candidate.deep_research
+            raw_insights = research.get('raw_research', '')
+
+            if raw_insights:
+                # Parse research into structured highlights
+                insights = self._parse_research_insights(raw_insights, {})
+
+                # GitHub projects
+                for item in insights.get('technical_skills', [])[:3]:
+                    research_highlights.append(ResearchHighlight(
+                        type='skill',
+                        title='Technical Skill',
+                        description=item
+                    ))
+
+                # Achievements
+                for item in insights.get('achievements', [])[:3]:
+                    research_highlights.append(ResearchHighlight(
+                        type='achievement',
+                        title='Achievement',
+                        description=item
+                    ))
+
+                # Online presence
+                for item in insights.get('online_presence', [])[:2]:
+                    research_highlights.append(ResearchHighlight(
+                        type='github',
+                        title='Online Presence',
+                        description=item
+                    ))
+
+        return EnrichmentDetails(
+            sources=sources,
+            pdl_fields=pdl_fields,
+            research_highlights=research_highlights,
+            data_quality_score=candidate.data_completeness
+        )
+
+    def _build_claude_reasoning_details(
+        self,
+        claude_score: float,
+        confidence: float,
+        agent_reasoning: dict,
+        rule_based_score: float
+    ) -> ClaudeReasoning:
+        """Build Claude reasoning details from agent scores."""
+        agent_scores = {}
+
+        # Map agent scores
+        for agent_name, agent_data in agent_reasoning.items():
+            agent_scores[f'{agent_name}_agent'] = AgentScore(
+                score=agent_data['score'],
+                reasoning=agent_data['reasoning']
+            )
+
+        # Calculate weighted explanation
+        weighted_calc = f"70% Claude ({claude_score:.0f}) + 30% rule-based ({rule_based_score:.0f}) = {(claude_score * 0.7 + rule_based_score * 0.3):.0f}"
+
+        return ClaudeReasoning(
+            overall_score=claude_score,
+            confidence=confidence,
+            agent_scores=agent_scores,
+            weighted_calculation=weighted_calc
+        )

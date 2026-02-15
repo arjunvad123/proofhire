@@ -123,6 +123,8 @@ async function request<T>(
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
 
+  console.log(`[API] ${options.method || 'GET'} ${url}`);
+
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -131,12 +133,17 @@ async function request<T>(
     },
   });
 
+  console.log(`[API] Response: ${response.status} ${response.statusText}`);
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
+    console.error(`[API] Error response:`, error);
     throw new Error(error.detail || `Request failed: ${response.status}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log(`[API] Success:`, typeof data === 'object' ? Object.keys(data) : data);
+  return data;
 }
 
 // Companies
@@ -351,7 +358,12 @@ export interface SearchResults {
   tier_2_one_intro: SearchCandidate[];
   tier_3_recruiters: SearchCandidate[];
   tier_4_cold: SearchCandidate[];
-  search_target: string;
+  search_target: string | {
+    role_title: string;
+    required_skills: string[];
+    preferred_backgrounds: string[];
+    locations: string[];
+  };
   search_duration_seconds: number;
   network_size: number;
   total_candidates: number;
@@ -507,6 +519,95 @@ export async function getDailyDigest(companyId: string): Promise<{
   return request(`/v3/company/digest/${companyId}`);
 }
 
+// =============================================================================
+// UNIFIED SEARCH API
+// =============================================================================
+
+export interface UnifiedCandidate {
+  id: string;
+  full_name: string;
+  current_title?: string;
+  current_company?: string;
+  location?: string;
+  linkedin_url?: string;
+  github_url?: string;
+
+  // Scores
+  fit_score: number;
+  warmth_score: number;
+  timing_score: number;
+  combined_score: number;
+
+  // Classification
+  tier: number;
+  tier_label: string;
+  source: string;
+  timing_urgency: string;
+
+  // Warm path
+  has_warm_path: boolean;
+  warm_path_type?: string;
+  warm_path_connector?: string;
+  warm_path_relationship?: string;
+  intro_message?: string;
+
+  // Context
+  why_consider: string[];
+  unknowns: string[];
+  research_highlights: string[];
+}
+
+export interface UnifiedSearchResponse {
+  role_title: string;
+  query_used: string;
+  search_duration_seconds: number;
+
+  network_size: number;
+  network_companies: number;
+
+  total_found: number;
+  tier_1_network: number;
+  tier_2_warm: number;
+  tier_3_cold: number;
+  high_urgency: number;
+
+  external_enabled: boolean;
+  timing_enabled: boolean;
+  research_enabled: boolean;
+  deep_researched: number;
+
+  candidates: UnifiedCandidate[];
+}
+
+export async function unifiedSearch(params: {
+  companyId: string;
+  roleTitle: string;
+  requiredSkills?: string[];
+  preferredSkills?: string[];
+  location?: string;
+  yearsExperience?: number;
+  includeExternal?: boolean;
+  includeTiming?: boolean;
+  deepResearch?: boolean;
+  limit?: number;
+}): Promise<UnifiedSearchResponse> {
+  return request('/search', {
+    method: 'POST',
+    body: JSON.stringify({
+      company_id: params.companyId,
+      role_title: params.roleTitle,
+      required_skills: params.requiredSkills || [],
+      preferred_skills: params.preferredSkills || [],
+      location: params.location,
+      years_experience: params.yearsExperience,
+      include_external: params.includeExternal ?? true,
+      include_timing: params.includeTiming ?? true,
+      deep_research: params.deepResearch ?? true,
+      limit: params.limit || 20,
+    }),
+  });
+}
+
 
 // =============================================================================
 // CURATION TYPES
@@ -526,8 +627,40 @@ export interface DeepResearchInsight {
   insights: string[];
 }
 
+export interface AgentScore {
+  score: number;
+  reasoning: string;
+}
+
+export interface ResearchHighlight {
+  type: 'github' | 'publication' | 'achievement' | 'skill';
+  title: string;
+  description: string;
+  url?: string;
+}
+
+export interface EnrichmentDetails {
+  sources: string[];  // ["pdl", "perplexity", "manual"]
+  pdl_fields: string[];  // Fields enriched by PDL
+  research_highlights: ResearchHighlight[];
+  data_quality_score: number;
+}
+
+export interface ClaudeReasoning {
+  overall_score: number;
+  confidence: number;
+  agent_scores: {
+    skills_agent?: AgentScore;
+    skill_agent?: AgentScore;
+    trajectory_agent?: AgentScore;
+    fit_agent?: AgentScore;
+    timing_agent?: AgentScore;
+  };
+  weighted_calculation: string;
+}
+
 export interface CandidateContext {
-  why_consider: string[]; // Frontend expects string[] in CandidateCard (line 409)
+  why_consider: (string | WhyConsiderPoint)[];
   unknowns: string[];
   standout_signal?: string;
   warm_path?: string;
@@ -538,6 +671,12 @@ export interface CandidateContext {
     };
   };
   suggested_interview_questions: string[];
+
+  // NEW: Enrichment details
+  enrichment_details?: EnrichmentDetails;
+
+  // NEW: Claude reasoning breakdown
+  claude_reasoning?: ClaudeReasoning;
 }
 
 export interface CuratedCandidate {
@@ -551,19 +690,15 @@ export interface CuratedCandidate {
   github_url?: string;
 
   // Scores
-  fit_score: number; // Mapped from match_score
-  confidence: number; // Mapped from fit_confidence
+  match_score: number;
+  fit_confidence: number;
   data_completeness: number;
 
   // Metadata
   was_enriched: boolean;
-  was_researched?: boolean; // Inferred
 
-  // Context flattened for frontend
-  why_consider?: string[];
-  unknowns?: string[];
-  warm_path?: string;
-  deep_research?: DeepResearchInsight[];
+  // Context
+  context: CandidateContext;
 }
 
 export interface CurationResults {
@@ -589,13 +724,92 @@ export interface CurationResults {
 export async function curateCandidates(
   companyId: string,
   roleId: string,
-  options: { limit?: number } = {}
+  options: { limit?: number; forceRefresh?: boolean } = {}
 ): Promise<CurationResults> {
   const start = Date.now();
 
-  // 1. Get role details to include title in response
-  // We do this in parallel or rely on backend, but here we'll fetch roles if we don't have the title easily
-  // For now, we'll fetch roles to find the title
+  // 1. Try to get from cache first
+  try {
+    console.log('📦 Attempting to load from cache...', { companyId, roleId });
+    const cacheResponse = await request<{
+      role_id: string;
+      role_title: string;
+      status: string;
+      shortlist: any[];
+      total_searched: number;
+      enriched_count: number;
+      avg_match_score: number;
+      generated_at: string;
+      expires_at: string;
+      from_cache: boolean;
+    }>(`/curation/cache/${companyId}/${roleId}?force_refresh=${options.forceRefresh || false}`);
+
+    console.log('📦 Cache response received:', {
+      from_cache: cacheResponse.from_cache,
+      shortlist_length: cacheResponse.shortlist?.length || 0,
+      total_searched: cacheResponse.total_searched,
+      status: cacheResponse.status
+    });
+
+    if (cacheResponse.from_cache) {
+      console.log('✓ Loaded from cache (instant)', { roleId });
+
+      // Validate shortlist is an array
+      if (!Array.isArray(cacheResponse.shortlist)) {
+        console.error('❌ Cache shortlist is not an array:', typeof cacheResponse.shortlist);
+        throw new Error('Invalid cache format: shortlist is not an array');
+      }
+
+      if (cacheResponse.shortlist.length === 0) {
+        console.warn('⚠️ Cache exists but shortlist is empty');
+      }
+
+      // Map cached data to CurationResults
+      const candidates: CuratedCandidate[] = cacheResponse.shortlist.map((c: any) => ({
+        person_id: c.person_id,
+        full_name: c.full_name,
+        headline: c.headline,
+        location: c.location,
+        current_company: c.current_company,
+        current_title: c.current_title,
+        linkedin_url: c.linkedin_url,
+        github_url: c.github_url,
+        match_score: c.match_score,
+        fit_confidence: c.fit_confidence,
+        data_completeness: c.data_completeness,
+        was_enriched: c.was_enriched,
+        context: c.context
+      }));
+
+      console.log('✓ Mapped candidates:', candidates.length);
+
+      return {
+        role_id: roleId,
+        role_title: cacheResponse.role_title,
+        candidates,
+        total_searched: cacheResponse.total_searched,
+        total_enriched: cacheResponse.enriched_count,
+        enrichment_rate: candidates.length > 0 ? (cacheResponse.enriched_count / candidates.length) * 100 : 0,
+        total_researched: cacheResponse.enriched_count,
+        research_rate: candidates.length > 0 ? (cacheResponse.enriched_count / candidates.length) * 100 : 0,
+        average_fit_score: cacheResponse.avg_match_score || 0,
+        average_confidence: 0.8,
+        processing_time_seconds: (Date.now() - start) / 1000 // Should be < 1 second
+      };
+    } else {
+      console.warn('⚠️ Cache response has from_cache=false, falling through to live curation');
+    }
+  } catch (error: any) {
+    // Cache miss (404) - fall through to generate new curation
+    if (error.message?.includes('404') || error.message?.includes('Cache not found')) {
+      console.log('⚠ Cache miss, generating new curation...', { roleId });
+    } else {
+      console.warn('Cache fetch error, falling back to live curation:', error);
+    }
+  }
+
+  // 2. Cache miss - call backend curation endpoint (slow path)
+  console.log('⏳ Cache miss, calling live curation endpoint...');
   let roleTitle = 'Unknown Role';
   try {
     const roles = await getRoles(companyId);
@@ -605,9 +819,10 @@ export async function curateCandidates(
     console.warn('Failed to fetch role title', e);
   }
 
-  // 2. Call backend curation endpoint
+  console.log('Calling /v1/curation/curate with:', { company_id: companyId, role_id: roleId, limit: options.limit || 15 });
+
   const response = await request<{
-    shortlist: any[]; // native backend type
+    shortlist: any[];
     total_searched: number;
     metadata: any;
   }>('/v1/curation/curate', {
@@ -619,9 +834,10 @@ export async function curateCandidates(
     }),
   });
 
+  console.log('Curation API response:', response);
+
   const processingTime = (Date.now() - start) / 1000;
 
-  // 3. Adapt response to CurationResults
   const candidates: CuratedCandidate[] = response.shortlist.map((c: any) => ({
     person_id: c.person_id,
     full_name: c.full_name,
@@ -631,33 +847,14 @@ export async function curateCandidates(
     current_title: c.current_title,
     linkedin_url: c.linkedin_url,
     github_url: c.github_url,
-
-    fit_score: c.match_score,
-    confidence: c.fit_confidence,
+    match_score: c.match_score,
+    fit_confidence: c.fit_confidence,
     data_completeness: c.data_completeness,
-
     was_enriched: c.was_enriched,
-    was_researched: c.was_enriched, // Assuming enriched means researched for now or based on deep_research presence? 
-    // Actually backend doesn't explicitly return deep_research in CuratedCandidate yet based on my read of curation.py
-    // But page.tsx expects it. For now leaving undefined or mapping from context if available.
-
-    // Flatten context
-    why_consider: c.context?.why_consider?.map((w: any) =>
-      // Handle if WhyConsiderPoint object or string
-      typeof w === 'string' ? w : `${w.points[0]} (${w.category})`
-    ) || [],
-    unknowns: c.context?.unknowns || [],
-    warm_path: c.context?.warm_path,
-
-    // Mock deep_research if not present but needed for UI for now, 
-    // or map if backend evolves. 
-    // The UI checks: candidate.deep_research && candidate.deep_research.length > 0
-    // We'll leave it empty if not provided.
-    deep_research: []
+    context: c.context
   }));
 
   const totalEnriched = response.metadata.enriched_count || 0;
-  const totalResearched = totalEnriched; // Proxied for now
 
   return {
     role_id: roleId,
@@ -666,12 +863,60 @@ export async function curateCandidates(
     total_searched: response.total_searched,
     total_enriched: totalEnriched,
     enrichment_rate: candidates.length > 0 ? (totalEnriched / candidates.length) * 100 : 0,
-    total_researched: totalResearched,
-    research_rate: candidates.length > 0 ? (totalResearched / candidates.length) * 100 : 0,
+    total_researched: totalEnriched,
+    research_rate: candidates.length > 0 ? (totalEnriched / candidates.length) * 100 : 0,
     average_fit_score: response.metadata.avg_match_score || 0,
     average_confidence: response.metadata.avg_confidence || 0,
     processing_time_seconds: processingTime
   };
+}
+
+// Generate cache for a specific role
+export async function generateCurationCache(
+  companyId: string,
+  roleId: string,
+  forceRefresh: boolean = false
+): Promise<{ status: string; role_id: string; message: string }> {
+  return request(`/curation/cache/generate/${companyId}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      role_id: roleId,
+      force_refresh: forceRefresh
+    })
+  });
+}
+
+// Generate cache for all company roles
+export async function generateAllCurationCaches(
+  companyId: string,
+  forceRefresh: boolean = false
+): Promise<{ status: string; queued_count: number; role_ids: string[]; message: string }> {
+  return request(`/curation/cache/generate-all/${companyId}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      force_refresh: forceRefresh
+    })
+  });
+}
+
+// Get cache status for all roles
+export async function getCurationCacheStatus(
+  companyId: string
+): Promise<{
+  total_roles: number;
+  cached: number;
+  processing: number;
+  pending: number;
+  failed: number;
+  roles: Array<{
+    id: string;
+    title: string;
+    status: string;
+    curation_status: string;
+    last_curated_at?: string;
+  }>;
+}> {
+  return request(`/curation/cache/status/${companyId}`);
 }
 
 export async function getCandidateContext(
@@ -711,6 +956,93 @@ export async function recordCandidateFeedback(
       decision,
       notes
     })
+  });
+}
+
+// =============================================================================
+// PIPELINE API FUNCTIONS
+// =============================================================================
+
+export interface PipelineCandidate {
+  id: string;
+  agencity_candidate_id: string;
+  name: string;
+  email?: string;
+  title?: string;
+  company?: string;
+  warmth_score: number;
+  warmth_level: string;
+  warm_path?: {
+    type: string;
+    description: string;
+  };
+  status: 'sourced' | 'contacted' | 'scheduled';
+  sourced_at: string;
+  contacted_at?: string;
+  scheduled_at?: string;
+}
+
+export interface PipelineResponse {
+  candidates: PipelineCandidate[];
+  total: number;
+  by_status: {
+    sourced: number;
+    contacted: number;
+    scheduled: number;
+  };
+}
+
+export async function getPipeline(
+  companyId: string,
+  params?: {
+    status?: 'all' | 'sourced' | 'contacted' | 'scheduled';
+    sort?: 'date' | 'score' | 'status';
+    limit?: number;
+  }
+): Promise<PipelineResponse> {
+  const queryParams = new URLSearchParams({
+    status: params?.status || 'all',
+    sort: params?.sort || 'date',
+    limit: String(params?.limit || 50),
+  });
+
+  return request(`/pipeline/${companyId}?${queryParams}`);
+}
+
+export async function updateCandidateStatus(
+  candidateId: string,
+  update: {
+    status: 'sourced' | 'contacted' | 'scheduled';
+    notes?: string;
+  }
+): Promise<{
+  id: string;
+  status: string;
+  contacted_at?: string;
+  scheduled_at?: string;
+  updated_at: string;
+}> {
+  return request(`/candidates/${candidateId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(update),
+  });
+}
+
+export async function recordFeedback(feedback: {
+  company_id: string;
+  candidate_id: string;
+  action: 'hired' | 'interviewed' | 'contacted' | 'saved' | 'rejected' | 'ignored';
+  search_id?: string;
+  notes?: string;
+  metadata?: any;
+}): Promise<{
+  id: string;
+  action: string;
+  recorded_at: string;
+}> {
+  return request('/feedback/action', {
+    method: 'POST',
+    body: JSON.stringify(feedback),
   });
 }
 

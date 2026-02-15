@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { getPipeline, updateCandidateStatus, PipelineCandidate as ApiPipelineCandidate } from '@/lib/api';
 
-// Types for ProofHire integration
+// Types for candidate pipeline
 interface CandidatePipeline {
   id: string;
   name: string;
@@ -24,22 +25,15 @@ interface CandidatePipeline {
     connector?: string;
   };
 
-  // ProofHire integration
-  proofhire_application_id?: string;
-  proofhire_role_id?: string;
-  simulation_status?: 'not_invited' | 'invited' | 'in_progress' | 'completed' | 'failed';
-  simulation_started_at?: string;
-  simulation_completed_at?: string;
-  brief_available?: boolean;
-
-  // Status tracking
-  status: 'sourced' | 'contacted' | 'invited' | 'in_simulation' | 'reviewed' | 'interviewing' | 'hired' | 'rejected';
+  // Status tracking (simple 3-stage pipeline)
+  status: 'sourced' | 'contacted' | 'scheduled';
   contacted_at?: string;
-  invited_at?: string;
+  scheduled_at?: string;
   notes?: string;
 }
 
 export default function PipelinePage() {
+  const [mounted, setMounted] = useState(false);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<CandidatePipeline[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,23 +42,22 @@ export default function PipelinePage() {
 
   // Get company ID
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('onboarding-state');
-      if (saved) {
-        try {
-          const state = JSON.parse(saved);
-          if (state.companyId) {
-            setCompanyId(state.companyId);
-            return;
-          }
-        } catch {
-          // ignore
+    setMounted(true);
+    const saved = localStorage.getItem('onboarding-state');
+    if (saved) {
+      try {
+        const state = JSON.parse(saved);
+        if (state.companyId) {
+          setCompanyId(state.companyId);
+          return;
         }
+      } catch {
+        // ignore
       }
-
-      // FALLBACK: Default to Confido for demo
-      setCompanyId("100b5ac1-1912-4970-a378-04d0169fd597");
     }
+
+    // FALLBACK: Default to Confido for demo
+    setCompanyId("100b5ac1-1912-4970-a378-04d0169fd597");
   }, []);
 
   // Load pipeline data
@@ -74,25 +67,18 @@ export default function PipelinePage() {
   }, [companyId]);
 
   async function loadPipeline() {
+    if (!companyId) return;
+
     setLoading(true);
     try {
-      // Fetch real pipeline data from Agencity API
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api';
-      const response = await fetch(`${API_BASE}/pipeline/${companyId}`, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const data = await getPipeline(companyId, {
+        status: selectedStatus as any,
+        sort: sortBy,
+        limit: 50
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to load pipeline: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setCandidates(data.candidates || []);
+      setCandidates(data.candidates as any);
     } catch (error) {
       console.error('Error loading pipeline:', error);
-      // Set empty array on error
       setCandidates([]);
     } finally {
       setLoading(false);
@@ -103,14 +89,13 @@ export default function PipelinePage() {
     all: candidates,
     sourced: candidates.filter((c) => c.status === 'sourced'),
     contacted: candidates.filter((c) => c.status === 'contacted'),
-    invited: candidates.filter((c) => c.status === 'invited'),
-    in_simulation: candidates.filter((c) => c.status === 'in_simulation'),
-    reviewed: candidates.filter((c) => c.status === 'reviewed'),
+    scheduled: candidates.filter((c) => c.status === 'scheduled'),
   };
 
   const filteredCandidates = selectedStatus === 'all' ? candidates : candidatesByStatus[selectedStatus as keyof typeof candidatesByStatus] || [];
 
-  if (loading) {
+  // Prevent hydration mismatch
+  if (!mounted || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -121,7 +106,7 @@ export default function PipelinePage() {
   return (
     <div className="space-y-6">
       {/* Header Stats */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <StageCard
           title="Sourced"
           count={candidatesByStatus.sourced.length}
@@ -137,25 +122,11 @@ export default function PipelinePage() {
           active={selectedStatus === 'contacted'}
         />
         <StageCard
-          title="Invited"
-          count={candidatesByStatus.invited.length}
-          color="purple"
-          onClick={() => setSelectedStatus('invited')}
-          active={selectedStatus === 'invited'}
-        />
-        <StageCard
-          title="In Simulation"
-          count={candidatesByStatus.in_simulation.length}
-          color="yellow"
-          onClick={() => setSelectedStatus('in_simulation')}
-          active={selectedStatus === 'in_simulation'}
-        />
-        <StageCard
-          title="Reviewed"
-          count={candidatesByStatus.reviewed.length}
+          title="Scheduled"
+          count={candidatesByStatus.scheduled.length}
           color="green"
-          onClick={() => setSelectedStatus('reviewed')}
-          active={selectedStatus === 'reviewed'}
+          onClick={() => setSelectedStatus('scheduled')}
+          active={selectedStatus === 'scheduled'}
         />
       </div>
 
@@ -247,6 +218,20 @@ function CandidateRow({
   onUpdate: () => void;
 }) {
   const [showActions, setShowActions] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const handleUpdateStatus = async (newStatus: 'sourced' | 'contacted' | 'scheduled') => {
+    setUpdating(true);
+    try {
+      await updateCandidateStatus(candidate.id, { status: newStatus });
+      await onUpdate();
+    } catch (error) {
+      console.error('Failed to update status:', error);
+      alert('Failed to update candidate status');
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const warmthColors = {
     network: 'bg-green-100 text-green-700',
@@ -257,45 +242,8 @@ function CandidateRow({
   const statusColors = {
     sourced: 'bg-gray-100 text-gray-700',
     contacted: 'bg-blue-100 text-blue-700',
-    invited: 'bg-purple-100 text-purple-700',
-    in_simulation: 'bg-yellow-100 text-yellow-700',
-    reviewed: 'bg-green-100 text-green-700',
-    interviewing: 'bg-orange-100 text-orange-700',
-    hired: 'bg-green-100 text-green-700',
-    rejected: 'bg-red-100 text-red-700',
+    scheduled: 'bg-green-100 text-green-700',
   };
-
-  async function handleInviteToProofHire() {
-    try {
-      const { inviteCandidateToProofHire } = await import('@/lib/proofhire-integration');
-
-      // TODO: Get these from state/props
-      const proofhireOrgId = 'org-id-here'; // From ProofHire org
-      const proofhireRoleId = 'role-id-here'; // Selected role
-
-      await inviteCandidateToProofHire({
-        companyId: candidate.company, // Agencity company ID
-        agencityCandidateId: candidate.agencity_candidate_id,
-        agencitySearchId: candidate.search_id,
-        candidateName: candidate.name,
-        candidateEmail: candidate.email,
-        proofhireRoleId,
-        proofhireOrgId,
-      });
-
-      alert(`Successfully invited ${candidate.name} to ProofHire!`);
-      onUpdate();
-    } catch (error) {
-      console.error('Failed to invite candidate:', error);
-      alert(`Failed to invite candidate: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  function getProofHireLink() {
-    if (!candidate.proofhire_application_id) return null;
-    // Link to ProofHire evaluation
-    return `http://localhost:3000/candidates/${candidate.proofhire_application_id}`;
-  }
 
   return (
     <div className="p-4 hover:bg-gray-50 transition-colors">
@@ -343,27 +291,6 @@ function CandidateRow({
             </div>
           )}
 
-          {/* ProofHire Status */}
-          {candidate.simulation_status && (
-            <div className="mb-3">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-gray-500">ProofHire:</span>
-                {candidate.simulation_status === 'invited' && (
-                  <span className="text-purple-700">Invitation sent</span>
-                )}
-                {candidate.simulation_status === 'in_progress' && (
-                  <span className="text-yellow-700 flex items-center gap-1">
-                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-                    Simulation in progress
-                  </span>
-                )}
-                {candidate.simulation_status === 'completed' && candidate.brief_available && (
-                  <span className="text-green-700">✓ Evaluation complete</span>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Timeline */}
           <div className="flex items-center gap-4 text-xs text-gray-500">
             <span>Sourced {new Date(candidate.sourced_at).toLocaleDateString()}</span>
@@ -373,10 +300,10 @@ function CandidateRow({
                 <span>Contacted {new Date(candidate.contacted_at).toLocaleDateString()}</span>
               </>
             )}
-            {candidate.invited_at && (
+            {candidate.scheduled_at && (
               <>
                 <span>•</span>
-                <span>Invited {new Date(candidate.invited_at).toLocaleDateString()}</span>
+                <span>Scheduled {new Date(candidate.scheduled_at).toLocaleDateString()}</span>
               </>
             )}
           </div>
@@ -384,27 +311,33 @@ function CandidateRow({
           {/* Actions */}
           {showActions && (
             <div className="mt-3 pt-3 border-t border-gray-200 flex items-center gap-2">
-              {!candidate.proofhire_application_id && (
-                <Button size="sm" onClick={handleInviteToProofHire}>
-                  Invite to ProofHire
-                </Button>
-              )}
-              {candidate.brief_available && getProofHireLink() && (
-                <a
-                  href={getProofHireLink()!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700"
+              {candidate.status === 'sourced' && (
+                <button
+                  onClick={() => handleUpdateStatus('contacted')}
+                  disabled={updating}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  View Evaluation Brief
-                </a>
+                  {updating ? 'Updating...' : 'Mark as Contacted'}
+                </button>
+              )}
+              {candidate.status === 'contacted' && (
+                <button
+                  onClick={() => handleUpdateStatus('scheduled')}
+                  disabled={updating}
+                  className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updating ? 'Updating...' : 'Mark as Scheduled'}
+                </button>
               )}
               <button className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
                 Add Note
               </button>
-              <button className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
-                Mark as Contacted
-              </button>
+              <a
+                href={`mailto:${candidate.email}`}
+                className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
+              >
+                Send Email
+              </a>
             </div>
           )}
         </div>

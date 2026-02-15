@@ -1,5 +1,5 @@
 """
-Pydantic models for Agencity ↔ ProofHire integration endpoints.
+Pydantic models for Agencity pipeline endpoints.
 """
 
 from datetime import datetime
@@ -152,12 +152,35 @@ class FeedbackStatsResponse(BaseModel):
 # PIPELINE ENDPOINTS
 # ============================================================================
 
-class ProofHireLinkageInfo(BaseModel):
-    """ProofHire linkage information for pipeline view."""
-    application_id: str
-    role_id: str
-    simulation_status: str
-    brief_available: bool
+class PipelineStatus(str, Enum):
+    """Pipeline status values."""
+    SOURCED = "sourced"
+    CONTACTED = "contacted"
+    SCHEDULED = "scheduled"
+
+
+class UpdateStatusRequest(BaseModel):
+    """Request to update candidate pipeline status."""
+    status: PipelineStatus = Field(..., description="New pipeline status")
+    notes: Optional[str] = Field(None, description="Optional notes about the status change")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "contacted",
+                "notes": "Sent initial outreach email"
+            }
+        }
+    )
+
+
+class UpdateStatusResponse(BaseModel):
+    """Response after updating pipeline status."""
+    id: str
+    status: str
+    contacted_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None
+    updated_at: datetime
 
 
 class WarmPathInfo(BaseModel):
@@ -167,7 +190,7 @@ class WarmPathInfo(BaseModel):
 
 
 class PipelineCandidate(BaseModel):
-    """Candidate in the pipeline."""
+    """Candidate in the pipeline - simple 3-stage flow."""
     id: str
     agencity_candidate_id: str
     name: str
@@ -177,11 +200,10 @@ class PipelineCandidate(BaseModel):
     warmth_score: float
     warmth_level: str
     warm_path: Optional[WarmPathInfo] = None
-    status: str
+    status: str  # sourced, contacted, scheduled
     sourced_at: datetime
     contacted_at: Optional[datetime] = None
-    invited_at: Optional[datetime] = None
-    proofhire_linkage: Optional[ProofHireLinkageInfo] = None
+    scheduled_at: Optional[datetime] = None
 
 
 class PipelineResponse(BaseModel):
@@ -189,3 +211,50 @@ class PipelineResponse(BaseModel):
     candidates: List[PipelineCandidate]
     total: int
     by_status: Dict[str, int]
+
+
+# ============================================================================
+# CURATION CACHE ENDPOINTS
+# ============================================================================
+
+class CurationCacheStatus(str, Enum):
+    """Curation cache status values."""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    CACHED = "cached"
+    FAILED = "failed"
+
+
+class GenerateCacheRequest(BaseModel):
+    """Request to generate cache for a role."""
+    role_id: str = Field(..., description="Role UUID")
+    force_refresh: bool = Field(False, description="Force refresh even if cache exists")
+
+
+class CurationCacheResponse(BaseModel):
+    """Response with cached curation data."""
+    role_id: str
+    role_title: str
+    status: str
+    shortlist: List[Dict[str, Any]]
+    total_searched: int
+    enriched_count: int
+    avg_match_score: float
+    generated_at: datetime
+    expires_at: datetime
+    from_cache: bool = True
+
+
+class GenerateAllCachesRequest(BaseModel):
+    """Request to generate cache for all company roles."""
+    force_refresh: bool = Field(False, description="Force refresh all caches")
+
+
+class CacheStatusResponse(BaseModel):
+    """Response with cache status for all roles."""
+    total_roles: int
+    cached: int
+    processing: int
+    pending: int
+    failed: int
+    roles: List[Dict[str, Any]]

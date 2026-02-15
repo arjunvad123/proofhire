@@ -48,23 +48,37 @@ class PerplexityResearcher:
         role_title: str,
         role_skills: list[str]
     ) -> str:
-        """Build a focused research query for Perplexity."""
+        """Build a focused research query for Perplexity with LinkedIn context."""
 
         skills_str = ", ".join(role_skills[:5]) if role_skills else "software engineering"
 
-        query = f"""Research {candidate.full_name} who works as {candidate.current_title} at {candidate.current_company}.
+        # Build query with LinkedIn URL for identity verification
+        linkedin_context = ""
+        if candidate.linkedin_url:
+            # Extract LinkedIn username from URL
+            linkedin_username = candidate.linkedin_url.split('/in/')[-1].strip('/')
+            linkedin_context = f"\n\nVerify identity using their LinkedIn: {candidate.linkedin_url} (username: {linkedin_username})"
+
+        # Add location for disambiguation
+        location_context = ""
+        if candidate.location:
+            location_context = f" based in {candidate.location}"
+
+        query = f"""Research {candidate.full_name} who works as {candidate.current_title} at {candidate.current_company}{location_context}.{linkedin_context}
 
 I'm evaluating them for a {role_title} role that requires: {skills_str}.
 
 Please find and summarize:
-1. Their GitHub profile and notable repositories (if any)
+1. Their GitHub profile and notable repositories (if any) - verify the GitHub username matches this person
 2. Technical skills, frameworks, and languages they use
 3. Open source contributions or public projects
 4. Professional achievements (hackathon wins, publications, talks)
 5. Online presence (blog posts, articles, Stack Overflow, Twitter/X)
 6. Education and relevant background
 
-Focus on technical signals and verifiable accomplishments. If their LinkedIn is {candidate.linkedin_url}, include insights from there too."""
+IMPORTANT: Only include information you can verify belongs to THIS specific person. If you find multiple people with the same name, use the LinkedIn profile and location to identify the correct person. If you cannot definitively match the information to this person, state "Unable to verify" for that section.
+
+Focus on technical signals and verifiable accomplishments."""
 
         return query
 

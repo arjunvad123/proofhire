@@ -51,6 +51,36 @@ class WhyConsiderPoint(BaseModel):
         use_enum_values = True
 
 
+class AgentScore(BaseModel):
+    """Score and reasoning from a single agent."""
+    score: float = Field(ge=0, le=100, description="Agent score (0-100)")
+    reasoning: str = Field(description="Agent reasoning text")
+
+
+class ResearchHighlight(BaseModel):
+    """Structured research insight from Perplexity."""
+    type: str = Field(description="Type: github, publication, achievement, skill")
+    title: str = Field(description="Title of the highlight")
+    description: str = Field(description="Description or details")
+    url: Optional[str] = None
+
+
+class EnrichmentDetails(BaseModel):
+    """Details about data enrichment sources."""
+    sources: List[str] = Field(default=[], description="Enrichment sources used: pdl, perplexity, manual")
+    pdl_fields: List[str] = Field(default=[], description="Fields enriched by PDL")
+    research_highlights: List[ResearchHighlight] = Field(default=[], description="Perplexity research insights")
+    data_quality_score: float = Field(default=0.0, ge=0, le=1, description="Data completeness score")
+
+
+class ClaudeReasoning(BaseModel):
+    """Claude AI reasoning breakdown."""
+    overall_score: float = Field(ge=0, le=100, description="Overall weighted score")
+    confidence: float = Field(ge=0, le=1, description="Confidence in analysis")
+    agent_scores: Dict[str, AgentScore] = Field(description="Individual agent scores")
+    weighted_calculation: str = Field(description="Explanation of weighted calculation")
+
+
 class CandidateContext(BaseModel):
     """
     Rich context for founder decision-making.
@@ -64,6 +94,12 @@ class CandidateContext(BaseModel):
     unknowns: List[str]
     standout_signal: Optional[str] = None  # "Won Best AI Hack at SD Hacks 2024"
     warm_path: str
+
+    # NEW: Enrichment details
+    enrichment_details: Optional[EnrichmentDetails] = None
+
+    # NEW: Claude reasoning breakdown
+    claude_reasoning: Optional[ClaudeReasoning] = None
 
 
 class CuratedCandidate(BaseModel):

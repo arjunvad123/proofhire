@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Agencity API</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .result { background: white; padding: 20px; margin: 10px 0; border-radius: 4px; border: 1px solid #ddd; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; }
+        pre { white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Agencity API</h1>
+    <p>Company ID: <code>100b5ac1-1912-4970-a378-04d0169fd597</code> (Confido)</p>
+
+    <button onclick="testRoles()">Test GET Roles</button>
+    <button onclick="testPeople()">Test GET People</button>
+    <button onclick="testCache()">Test GET Cache</button>
+    <button onclick="clearResults()">Clear</button>
+
+    <div id="results"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8001/api';
+        const COMPANY_ID = '100b5ac1-1912-4970-a378-04d0169fd597';
+        const ROLE_ID = '777793a1-097f-42c7-a1e2-c66f93ac1e47'; // Software Engineer
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `result ${type}`;
+            div.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong>: ${message}`;
+            document.getElementById('results').prepend(div);
+        }
+
+        function logJson(label, data) {
+            const div = document.createElement('div');
+            div.className = 'result';
+            div.innerHTML = `<strong>${label}</strong><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            document.getElementById('results').prepend(div);
+        }
+
+        async function testRoles() {
+            log('Testing GET /companies/:id/roles...');
+            try {
+                const url = `${API_BASE}/companies/${COMPANY_ID}/roles`;
+                console.log('Fetching:', url);
+
+                const response = await fetch(url);
+                console.log('Response:', response.status, response.statusText);
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    log(`❌ Failed: ${response.status} ${response.statusText}<br>${error}`, 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                log(`✅ Success! Found ${data.length} roles`, 'success');
+                logJson('Roles:', data);
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        async function testPeople() {
+            log('Testing GET /companies/:id/people...');
+            try {
+                const url = `${API_BASE}/companies/${COMPANY_ID}/people?limit=5`;
+                console.log('Fetching:', url);
+
+                const response = await fetch(url);
+                console.log('Response:', response.status, response.statusText);
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    log(`❌ Failed: ${response.status} ${response.statusText}<br>${error}`, 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                log(`✅ Success! Found ${data.people.length} people (total: ${data.total})`, 'success');
+                logJson('People:', data);
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        async function testCache() {
+            log('Testing GET /curation/cache/:company_id/:role_id...');
+            try {
+                const url = `${API_BASE}/curation/cache/${COMPANY_ID}/${ROLE_ID}`;
+                console.log('Fetching:', url);
+
+                const response = await fetch(url);
+                console.log('Response:', response.status, response.statusText);
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    log(`❌ Failed: ${response.status} ${response.statusText}<br>${error}`, 'error');
+                    return;
+                }
+
+                const data = await response.json();
+                log(`✅ Success! Cache ${data.from_cache ? 'EXISTS' : 'MISS'} with ${data.shortlist?.length || 0} candidates`, 'success');
+                logJson('Cache:', {
+                    from_cache: data.from_cache,
+                    role_title: data.role_title,
+                    shortlist_count: data.shortlist?.length || 0,
+                    total_searched: data.total_searched,
+                    enriched_count: data.enriched_count,
+                    avg_match_score: data.avg_match_score,
+                    generated_at: data.generated_at,
+                    expires_at: data.expires_at
+                });
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+
+        // Auto-test on load
+        window.onload = () => {
+            log('Page loaded. Click buttons to test API endpoints.', 'success');
+        };
+    </script>
+</body>
+</html>

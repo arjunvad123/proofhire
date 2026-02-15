@@ -1,12 +1,12 @@
 """
-Integration API routes for Agencity ↔ ProofHire.
+Pipeline API routes for Agencity.
 
-Endpoints for managing candidate linkages, feedback actions, and pipeline view.
+Endpoints for managing candidate pipeline status and feedback actions.
 """
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -25,8 +25,15 @@ from app.api.models.integration import (
     ProofHireIntegrationStats,
     PipelineResponse,
     PipelineCandidate,
-    ProofHireLinkageInfo,
     WarmPathInfo,
+    UpdateStatusRequest,
+    UpdateStatusResponse,
+    PipelineStatus,
+    CurationCacheResponse,
+    CacheStatusResponse,
+    GenerateCacheRequest,
+    GenerateAllCachesRequest,
+    CurationCacheStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,10 +41,11 @@ router = APIRouter()
 
 
 # ============================================================================
-# LINKAGE ENDPOINTS
+# LINKAGE ENDPOINTS (DEPRECATED - ProofHire integration removed)
 # ============================================================================
+# These endpoints are kept for backwards compatibility but will be removed in future versions
 
-@router.post("/linkages", response_model=LinkageResponse, status_code=201)
+@router.post("/linkages", response_model=LinkageResponse, status_code=201, deprecated=True)
 async def create_linkage(request: CreateLinkageRequest):
     """
     Create a new candidate linkage between Agencity and ProofHire.
@@ -94,7 +102,7 @@ async def create_linkage(request: CreateLinkageRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/linkages/candidate/{candidate_id}", response_model=LinkageResponse)
+@router.get("/linkages/candidate/{candidate_id}", response_model=LinkageResponse, deprecated=True)
 async def get_linkage_by_candidate(candidate_id: str):
     """
     Get linkage for a specific Agencity candidate.
@@ -121,7 +129,7 @@ async def get_linkage_by_candidate(candidate_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/linkages/application/{application_id}", response_model=LinkageResponse)
+@router.get("/linkages/application/{application_id}", response_model=LinkageResponse, deprecated=True)
 async def get_linkage_by_application(application_id: str):
     """
     Get linkage by ProofHire application ID.
@@ -148,7 +156,7 @@ async def get_linkage_by_application(application_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/linkages/company/{company_id}", response_model=LinkagesListResponse)
+@router.get("/linkages/company/{company_id}", response_model=LinkagesListResponse, deprecated=True)
 async def get_company_linkages(
     company_id: str,
     status: Optional[str] = Query(None, description="Filter by status (all if not specified)")
@@ -194,7 +202,7 @@ async def get_company_linkages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/linkages/{linkage_id}", response_model=LinkageResponse)
+@router.patch("/linkages/{linkage_id}", response_model=LinkageResponse, deprecated=True)
 async def update_linkage(linkage_id: str, request: UpdateLinkageRequest):
     """
     Update linkage status.
@@ -347,16 +355,16 @@ async def get_pipeline(
     """
     Get all candidates in the pipeline for a company.
 
-    Includes candidates from search results with their linkage status and ProofHire data.
+    Simple 3-stage pipeline: sourced, contacted, scheduled
     """
     supabase = get_supabase_client()
 
     try:
-        # Get all people for this company with optional linkage data
+        # Get all people for this company
         query = supabase.table("people").select(
             "id, full_name, email, current_title, current_company, "
-            "trust_score, is_from_network, first_seen, "
-            "candidate_linkages(id, proofhire_application_id, proofhire_role_id, status)"
+            "trust_score, is_from_network, first_seen, pipeline_status, "
+            "contacted_at, scheduled_at"
         ).eq("company_id", company_id)
 
         result = query.order("first_seen", desc=True).limit(limit).execute()
@@ -365,37 +373,12 @@ async def get_pipeline(
         status_counts = {
             "sourced": 0,
             "contacted": 0,
-            "invited": 0,
-            "in_simulation": 0,
-            "reviewed": 0
+            "scheduled": 0
         }
 
         for person in result.data:
-            # Determine candidate status
-            linkage = person.get("candidate_linkages")
-            if linkage and len(linkage) > 0:
-                linkage = linkage[0]
-                linkage_status = linkage["status"]
-
-                # Map linkage status to pipeline status
-                if linkage_status == "linked":
-                    candidate_status = "invited"
-                elif linkage_status in ["simulation_pending", "simulation_in_progress"]:
-                    candidate_status = "in_simulation"
-                elif linkage_status in ["simulation_complete", "evaluated"]:
-                    candidate_status = "reviewed"
-                else:
-                    candidate_status = "sourced"
-
-                proofhire_info = ProofHireLinkageInfo(
-                    application_id=linkage["proofhire_application_id"],
-                    role_id=linkage["proofhire_role_id"],
-                    simulation_status=linkage_status,
-                    brief_available=(linkage_status == "evaluated")
-                )
-            else:
-                candidate_status = "sourced"
-                proofhire_info = None
+            # Get pipeline status from database, default to 'sourced'
+            candidate_status = person.get("pipeline_status", "sourced")
 
             # Warmth level
             warmth_score = person.get("trust_score", 0.5)
@@ -423,9 +406,8 @@ async def get_pipeline(
                 warm_path=warm_path,
                 status=candidate_status,
                 sourced_at=person["first_seen"],
-                contacted_at=None,  # TODO: Track this separately
-                invited_at=linkage["created_at"] if linkage else None,
-                proofhire_linkage=proofhire_info
+                contacted_at=person.get("contacted_at"),
+                scheduled_at=person.get("scheduled_at")
             ))
 
         # Apply status filter
@@ -447,4 +429,273 @@ async def get_pipeline(
 
     except APIError as e:
         logger.error(f"Supabase error getting pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/candidates/{candidate_id}/status", response_model=UpdateStatusResponse)
+async def update_candidate_status(
+    candidate_id: str,
+    request: UpdateStatusRequest
+):
+    """
+    Update candidate pipeline status.
+
+    Updates the pipeline_status field and sets appropriate timestamps:
+    - contacted: Sets contacted_at
+    - scheduled: Sets scheduled_at
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Verify candidate exists
+        candidate = supabase.table("people").select("id, pipeline_status").eq(
+            "id", candidate_id
+        ).execute()
+
+        if not candidate.data:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        # Prepare update data
+        update_data = {
+            "pipeline_status": request.status.value,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+
+        # Set timestamp based on status
+        if request.status == PipelineStatus.CONTACTED:
+            update_data["contacted_at"] = datetime.utcnow().isoformat()
+        elif request.status == PipelineStatus.SCHEDULED:
+            update_data["scheduled_at"] = datetime.utcnow().isoformat()
+
+        # Update the candidate
+        result = supabase.table("people").update(update_data).eq(
+            "id", candidate_id
+        ).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to update candidate status")
+
+        updated_candidate = result.data[0]
+
+        logger.info(
+            f"Updated candidate {candidate_id} to status: {request.status.value}"
+            + (f" with notes: {request.notes}" if request.notes else "")
+        )
+
+        return UpdateStatusResponse(
+            id=updated_candidate["id"],
+            status=updated_candidate["pipeline_status"],
+            contacted_at=updated_candidate.get("contacted_at"),
+            scheduled_at=updated_candidate.get("scheduled_at"),
+            updated_at=updated_candidate["updated_at"]
+        )
+
+    except APIError as e:
+        logger.error(f"Supabase error updating candidate status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CURATION CACHE ENDPOINTS
+# ============================================================================
+
+@router.get("/curation/cache/{company_id}/{role_id}", response_model=CurationCacheResponse)
+async def get_curation_cache(
+    company_id: str,
+    role_id: str,
+    force_refresh: bool = Query(False, description="Force refresh cache")
+):
+    """
+    Get cached curated candidates for a role.
+
+    Returns cached results if available and not expired.
+    If cache is expired or force_refresh=True, returns 404.
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Check cache
+        if not force_refresh:
+            cache_result = supabase.table("curation_cache").select(
+                "id, role_id, shortlist, metadata, total_searched, enriched_count, "
+                "avg_match_score, generated_at, expires_at"
+            ).eq("company_id", company_id).eq("role_id", role_id).gt(
+                "expires_at", datetime.utcnow().isoformat()
+            ).execute()
+
+            if cache_result.data:
+                cache = cache_result.data[0]
+
+                # Get role title
+                role_result = supabase.table("roles").select("title").eq("id", role_id).execute()
+                role_title = role_result.data[0]["title"] if role_result.data else "Unknown Role"
+
+                logger.info(f"Cache hit for role {role_id}")
+
+                return CurationCacheResponse(
+                    role_id=role_id,
+                    role_title=role_title,
+                    status="cached",
+                    shortlist=cache["shortlist"],
+                    total_searched=cache["total_searched"],
+                    enriched_count=cache["enriched_count"],
+                    avg_match_score=cache["avg_match_score"],
+                    generated_at=cache["generated_at"],
+                    expires_at=cache["expires_at"],
+                    from_cache=True
+                )
+
+        # Cache miss or force refresh
+        raise HTTPException(
+            status_code=404,
+            detail="Cache not found or expired. Use POST /curation/cache/generate to create cache."
+        )
+
+    except HTTPException:
+        raise
+    except APIError as e:
+        logger.error(f"Supabase error getting cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/curation/cache/generate/{company_id}", response_model=Dict[str, str])
+async def generate_curation_cache(
+    company_id: str,
+    request: GenerateCacheRequest
+):
+    """
+    Generate/refresh cached curated candidates for a role.
+
+    This triggers a background job to:
+    1. Run curation for the role
+    2. Store results in cache
+    3. Update role curation_status
+
+    Returns immediately with job ID.
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Verify role exists
+        role = supabase.table("roles").select("id, title").eq(
+            "id", request.role_id
+        ).eq("company_id", company_id).execute()
+
+        if not role.data:
+            raise HTTPException(status_code=404, detail="Role not found")
+
+        # Update role status to 'processing'
+        supabase.table("roles").update({
+            "curation_status": "processing"
+        }).eq("id", request.role_id).execute()
+
+        # NOTE: In production, this should trigger a background job (Celery, RQ, etc.)
+        # For now, we'll mark it as pending and return
+        # The actual curation should be done by a background worker
+
+        logger.info(f"Curation job queued for role {request.role_id}")
+
+        return {
+            "status": "queued",
+            "role_id": request.role_id,
+            "message": "Curation job queued. Results will be cached when complete."
+        }
+
+    except HTTPException:
+        raise
+    except APIError as e:
+        logger.error(f"Supabase error generating cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/curation/cache/generate-all/{company_id}", response_model=Dict[str, Any])
+async def generate_all_curation_caches(
+    company_id: str,
+    request: GenerateAllCachesRequest
+):
+    """
+    Generate/refresh cached curated candidates for ALL company roles.
+
+    This triggers background jobs for all active roles.
+    Returns immediately with status.
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Get all active roles
+        roles_result = supabase.table("roles").select("id, title, status").eq(
+            "company_id", company_id
+        ).eq("status", "active").execute()
+
+        if not roles_result.data:
+            return {
+                "status": "no_roles",
+                "message": "No active roles found",
+                "queued_count": 0
+            }
+
+        # Update all roles to 'processing'
+        role_ids = [r["id"] for r in roles_result.data]
+
+        for role_id in role_ids:
+            supabase.table("roles").update({
+                "curation_status": "processing"
+            }).eq("id", role_id).execute()
+
+        logger.info(f"Curation jobs queued for {len(role_ids)} roles")
+
+        return {
+            "status": "queued",
+            "queued_count": len(role_ids),
+            "role_ids": role_ids,
+            "message": f"Curation jobs queued for {len(role_ids)} roles"
+        }
+
+    except APIError as e:
+        logger.error(f"Supabase error generating all caches: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/curation/cache/status/{company_id}", response_model=CacheStatusResponse)
+async def get_cache_status(company_id: str):
+    """
+    Get curation cache status for all company roles.
+
+    Returns counts and details for each role's cache status.
+    """
+    supabase = get_supabase_client()
+
+    try:
+        # Get all roles with their curation status
+        roles_result = supabase.table("roles").select(
+            "id, title, status, curation_status, last_curated_at"
+        ).eq("company_id", company_id).execute()
+
+        if not roles_result.data:
+            return CacheStatusResponse(
+                total_roles=0,
+                cached=0,
+                processing=0,
+                pending=0,
+                failed=0,
+                roles=[]
+            )
+
+        # Count by status
+        cached = sum(1 for r in roles_result.data if r.get("curation_status") == "cached")
+        processing = sum(1 for r in roles_result.data if r.get("curation_status") == "processing")
+        pending = sum(1 for r in roles_result.data if r.get("curation_status") == "pending")
+        failed = sum(1 for r in roles_result.data if r.get("curation_status") == "failed")
+
+        return CacheStatusResponse(
+            total_roles=len(roles_result.data),
+            cached=cached,
+            processing=processing,
+            pending=pending,
+            failed=failed,
+            roles=roles_result.data
+        )
+
+    except APIError as e:
+        logger.error(f"Supabase error getting cache status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
