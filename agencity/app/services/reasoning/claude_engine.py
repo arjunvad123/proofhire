@@ -98,13 +98,29 @@ class ClaudeReasoningEngine:
         api_key: Optional[str] = None,
         model: Optional[str] = None
     ):
-        self.api_key = api_key or settings.anthropic_api_key
-        self.model = model or settings.claude_model
-        self.api_url = "https://api.anthropic.com/v1/messages"
-        self.enabled = bool(self.api_key)
+        # Try Anthropic first, fall back to OpenAI
+        self.anthropic_key = api_key or settings.anthropic_api_key
+        self.openai_key = settings.openai_api_key
 
-        if not self.enabled:
-            logger.warning("Anthropic API key not configured - reasoning will use fallback mode")
+        if self.anthropic_key:
+            self.use_anthropic = True
+            self.api_key = self.anthropic_key
+            self.model = model or settings.claude_model
+            self.api_url = "https://api.anthropic.com/v1/messages"
+            logger.info("Using Anthropic Claude for reasoning")
+        elif self.openai_key:
+            self.use_anthropic = False
+            self.api_key = self.openai_key
+            self.model = model or "gpt-4o"
+            self.api_url = "https://api.openai.com/v1/chat/completions"
+            logger.info("Using OpenAI GPT-4o for reasoning (Anthropic key not configured)")
+        else:
+            self.use_anthropic = False
+            self.api_key = None
+            self.model = None
+            logger.warning("Neither Anthropic nor OpenAI API key configured - reasoning will use fallback mode")
+
+        self.enabled = bool(self.api_key)
 
     # =========================================================================
     # QUERY REASONING
@@ -545,31 +561,56 @@ Output ONLY valid JSON (no markdown): {{"score": number, "reasoning": "brief exp
     # =========================================================================
 
     async def _call_claude(self, prompt: str, max_tokens: int = 1000) -> str:
-        """Call Claude API."""
+        """Call LLM API (Claude or OpenAI)."""
         if not self.api_key:
-            raise ValueError("Anthropic API key not configured")
+            raise ValueError("No API key configured (need Anthropic or OpenAI)")
 
-        headers = {
-            "x-api-key": self.api_key,
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01"
-        }
+        if self.use_anthropic:
+            # Anthropic Claude API format
+            headers = {
+                "x-api-key": self.api_key,
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01"
+            }
 
-        payload = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}]
-        }
+            payload = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}]
+            }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                self.api_url,
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["content"][0]["text"]
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["content"][0]["text"]
+        else:
+            # OpenAI API format
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    self.api_url,
+                    headers=headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
 
 
 # =============================================================================

@@ -122,6 +122,11 @@ class CuratedCandidate(BaseModel):
     linkedin_url: Optional[str] = None
     github_url: Optional[str] = None
 
+    # Skills & Experience (from PDL enrichment)
+    skills: list[str] = []
+    experience: list[dict] = []
+    education: list[dict] = []
+
     # Fit
     match_score: float = Field(ge=0, le=100)
     fit_confidence: float = Field(ge=0, le=1)
@@ -169,7 +174,9 @@ class CurationResponse(BaseModel):
     """Response with curated shortlist."""
     shortlist: List[CuratedCandidate]
     total_searched: int
+    processing_time_seconds: float = 0.0
     metadata: Dict[str, Any]
+
 
 
 class UnifiedCandidate(BaseModel):

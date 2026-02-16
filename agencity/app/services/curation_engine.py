@@ -106,8 +106,9 @@ class CandidateCurationEngine:
         print(f"📈 Rule-based Top Score: {top_score:.1f} | Avg Conf: {avg_confidence:.2f}")
 
         # 5. Enrich TOP 5 candidates with PDL
-        top_5 = ranked_candidates[:5]
-        to_enrich = [c for c in top_5 if c['candidate'].linkedin_url]
+        top_n_to_enrich = 5
+        top_candidates = ranked_candidates[:top_n_to_enrich]
+        to_enrich = [c for c in top_candidates if c['candidate'].linkedin_url]
 
         if to_enrich:
             print(f"🔍 Enriching top {len(to_enrich)} candidates via PDL...")
@@ -141,24 +142,26 @@ class CandidateCurationEngine:
             new_top = ranked_candidates[0].get('final_score', ranked_candidates[0]['fit_score'])
             print(f"✨ Re-ranked. New Top Score: {new_top:.1f}")
 
-        # 7. Deep research on top 5 candidates using Perplexity
+        # 7. Deep research on top 10 candidates using Perplexity
         if settings.perplexity_api_key:
-            final_top_5 = ranked_candidates[:5]
-            print(f"🔬 Running deep research on top {len(final_top_5)} candidates...")
+            final_top_n = 10
+            final_top_research = ranked_candidates[:final_top_n]
+            print(f"🔬 Running deep research on top {len(final_top_research)} candidates...")
 
             research_engine = DeepResearchEngine(settings.perplexity_api_key)
 
             try:
                 # Extract candidates for research
-                candidates_to_research = [item['candidate'] for item in final_top_5]
+                candidates_to_research = [item['candidate'] for item in final_top_research]
 
                 # Run deep research
                 enhanced_candidates = await research_engine.enhance_candidates(
                     candidates_to_research,
                     role_title=role.get('title', ''),
                     role_skills=role.get('required_skills', []),
-                    top_n=5
+                    top_n=final_top_n
                 )
+
 
                 # Update candidates with research insights
                 for i, enhanced in enumerate(enhanced_candidates):
@@ -204,6 +207,9 @@ class CandidateCurationEngine:
                 current_title=item['candidate'].current_title,
                 linkedin_url=item['candidate'].linkedin_url,
                 github_url=item['candidate'].github_url,
+                skills=item['candidate'].skills if hasattr(item['candidate'], 'skills') else [],
+                experience=item['candidate'].experience if hasattr(item['candidate'], 'experience') else [],
+                education=item['candidate'].education if hasattr(item['candidate'], 'education') else [],
                 match_score=item.get('final_score', item['fit_score']),
                 fit_confidence=item['confidence'],
                 context=context,
@@ -381,8 +387,14 @@ class CandidateCurationEngine:
         years = total_months / 12 if total_months else 0
 
         # Compare to role requirements
-        min_years = role.get('years_experience_min', 0)
-        max_years = role.get('years_experience_max', 10)
+        min_years = role.get('years_experience_min') or 0
+        max_years = role.get('years_experience_max') or 10
+
+        # Handle None values with safe defaults
+        if min_years is None:
+            min_years = 0
+        if max_years is None:
+            max_years = 10
 
         if min_years <= years <= max_years:
             score += 0.5
@@ -985,6 +997,21 @@ class CandidateCurationEngine:
                 self.supabase.table('person_enrichments')\
                     .insert(payload)\
                     .execute()
+
+            # IMPORTANT: Also update the people table with location data from enrichment
+            people_updates = {}
+            if enrichment_data.get('location'):
+                people_updates['location'] = enrichment_data['location']
+            if enrichment_data.get('headline'):
+                # Update headline if it's more detailed than current
+                people_updates['headline'] = enrichment_data['headline']
+
+            if people_updates:
+                self.supabase.table('people')\
+                    .update(people_updates)\
+                    .eq('id', person_id)\
+                    .execute()
+                print(f"    📍 Updated location: {enrichment_data.get('location')}")
 
             print(f"    💾 Stored enrichment (source: {source})")
         except Exception as e:

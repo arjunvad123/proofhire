@@ -689,6 +689,11 @@ export interface CuratedCandidate {
   linkedin_url?: string;
   github_url?: string;
 
+  // Skills & Experience (from PDL enrichment)
+  skills?: string[];
+  experience?: any[];
+  education?: any[];
+
   // Scores
   match_score: number;
   fit_confidence: number;
@@ -774,6 +779,9 @@ export async function curateCandidates(
         current_title: c.current_title,
         linkedin_url: c.linkedin_url,
         github_url: c.github_url,
+        skills: c.skills || [],
+        experience: c.experience || [],
+        education: c.education || [],
         match_score: c.match_score,
         fit_confidence: c.fit_confidence,
         data_completeness: c.data_completeness,
@@ -847,6 +855,9 @@ export async function curateCandidates(
     current_title: c.current_title,
     linkedin_url: c.linkedin_url,
     github_url: c.github_url,
+    skills: c.skills || [],
+    experience: c.experience || [],
+    education: c.education || [],
     match_score: c.match_score,
     fit_confidence: c.fit_confidence,
     data_completeness: c.data_completeness,
