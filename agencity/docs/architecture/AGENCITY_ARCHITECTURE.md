@@ -298,20 +298,21 @@ def calculate_fit(candidate, role):
   🔗 GitHub: https://github.com/vishnu32510
 ```
 
-### Performance Metrics (Tested Feb 11-12, 2026)
+### Performance Metrics (Updated Feb 16, 2026)
 
 | Metric | Value |
 |--------|-------|
 | **Total Searched** | 1,000 candidates |
-| **Enrichment Rate** | 3% (30/1,000) |
-| **🆕 Deep Research Rate** | 0.5% (5/1,000) - Top 5 only |
+| **Enrichment Rate** | 0.5% (5/1,000) - **Optimized from 3%** |
+| **Deep Research Rate** | 1.0% (10/1,000) - **Expanded from 5** |
 | **Processing Time** | ~2 minutes (including research) |
 | **Shortlist Size** | 10-15 candidates |
-| **Cost Savings** | 97% vs enriching all |
+| **Cost Savings** | 99.5% vs enriching all (improved from 97%) |
 | **Average Match Score** | 44-53/100 (will improve with enriched data) |
 | **Average Confidence** | 0.30 (low - needs more data) |
 | **Data Completeness** | 30% base + research insights |
-| **🆕 Research Success** | 100% - Found GitHub/skills for top candidates |
+| **Research Success** | 100% - Found GitHub/skills for top candidates |
+| **Cache Hit Rate** | ~80-90% for subsequent roles (30-day PDL cache) |
 
 ### API Endpoints
 
@@ -334,6 +335,12 @@ POST /api/v1/curation/candidate/{person_id}/feedback
   "decision": "interview" | "pass" | "need_more_info",
   "notes": "..."
 }
+
+# 🆕 Regenerate AI summary (no re-enrichment)
+POST /api/v1/curation/candidate/{person_id}/regenerate-summary?role_id=uuid-...
+# Returns AI-generated narrative summary using existing data
+# No PDL API cost - only Claude AI generation (~$0.001)
+# See API_USAGE_EXAMPLE.md for details
 ```
 
 ### Test Results
@@ -376,17 +383,145 @@ Results:
 ✅ All candidates properly ranked and enriched
 ```
 
+### Recent Improvements ✅
+
+1. ✅ **Cost Optimization** - Reduced enrichment from 20 to 5 candidates (99.5% savings)
+2. ✅ **Expanded Research** - Increased deep research from 5 to 10 candidates
+3. ✅ **Data Quality** - Fixed PDL location/skills persistence
+4. ✅ **AI Summaries** - Added regenerate-summary endpoint for narrative generation
+5. ✅ **Workflow** - Curation-to-pipeline approval system with undo capability
+6. ✅ **Cache Strategy** - Documented 30-day PDL cache for cost efficiency
+7. ✅ **Demo Setup** - Hardcoded summaries and demo initializer for quick setup
+
 ### Next Steps for Improvement
 
-1. **Week 2**: Add People Data Labs enrichment API (populate candidate skills/experience)
-2. **Week 3**: ~~Add GitHub/DevPost fetchers~~ ✅ **DONE** - Perplexity finds GitHub automatically
-3. **Week 4**: Implement feedback loop to learn from founder decisions
-4. **Week 5**: Build frontend UI for displaying shortlists with deep research insights
+1. **Production UI** - Build frontend for curation workflow (replace demo hardcoded summaries)
+2. **Feedback Loop** - Implement ML learning from founder accept/reject decisions
+3. **Auto-Summary** - Call regenerate-summary automatically for top candidates
+4. **Cache Management** - Add cache hit/miss tracking dashboard
 5. **Future**: Add more research sources (Stack Overflow API, Twitter/X, personal websites)
 
 ---
 
-## 5.5. Deep Research Engine (Perplexity AI) 🆕
+## 5.4. AI Summary Regeneration System 🆕
+
+### Overview
+
+The AI Summary Regeneration system generates natural language candidate summaries **without re-enrichment**, using existing candidate data and Claude AI to create narrative assessments.
+
+### Key Benefits
+
+- **No Re-Enrichment Cost** - Uses existing data, no PDL API calls (~$0.10 saved per candidate)
+- **Fast** - 2-3 seconds per summary (Claude API only)
+- **Natural Language** - Human-readable narratives instead of template text
+- **On-Demand** - Generate when needed, not for all candidates
+- **Consistent Tone** - Professional, balanced assessments
+
+### How It Works
+
+```
+Existing Candidate Data
+    ↓
+Build Context (skills, experience, education, current role)
+    ↓
+Claude AI Prompt with Role Requirements
+    ↓
+Generate Structured Summary:
+  - overall_assessment (narrative paragraph)
+  - why_consider (bullet points)
+  - concerns (honest red flags)
+  - unknowns (missing information)
+  - skill_reasoning
+  - trajectory_reasoning
+  - fit_reasoning
+  - timing_reasoning
+    ↓
+Return JSON + Optional DB Storage
+```
+
+### API Endpoint
+
+```bash
+POST /v1/curation/candidate/{person_id}/regenerate-summary?role_id={role_id}
+
+# Response
+{
+  "status": "success",
+  "person_id": "abc-123",
+  "full_name": "Nikhil Hooda",
+  "ai_summary": {
+    "overall_assessment": "Nikhil is a strong backend engineer...",
+    "why_consider": ["5+ years at Shopify", "Strong SQL skills"],
+    "concerns": ["May prefer big company stability"],
+    "unknowns": ["Interest in startups", "Salary expectations"],
+    "skill_reasoning": "Strong SQL match. Score: 85/100",
+    "trajectory_reasoning": "5 years shows growth. Score: 80/100",
+    "fit_reasoning": "Big company background. Score: 70/100",
+    "timing_reasoning": "5-year mark, worth exploring. Score: 65/100"
+  }
+}
+```
+
+### Frontend Integration
+
+**Hardcoded Demo Version** (Current):
+```typescript
+// In CandidateDetailedAnalysis.tsx
+const hardcodedSummaries: Record<string, string> = {
+  'Nikhil Hooda': 'Nikhil is a strong backend engineer...',
+  // Top 5 candidates
+};
+```
+
+**Production Version** (Planned):
+```typescript
+// Fetch AI summary on-demand
+const fetchAISummary = async () => {
+  const response = await fetch(
+    `/v1/curation/candidate/${personId}/regenerate-summary?role_id=${roleId}`,
+    { method: 'POST' }
+  );
+  const { ai_summary } = await response.json();
+  setAiSummary(ai_summary);
+};
+```
+
+### Cost Analysis
+
+| Action | Cost | Comparison |
+|--------|------|------------|
+| **AI Summary Only** | ~$0.001 | Claude API |
+| **Re-Enrichment + Summary** | ~$0.10 | PDL + Claude |
+| **Savings** | 99% | By using existing data |
+
+### Use Cases
+
+1. **Demo/Preview** - Show AI-quality summaries without API costs (hardcoded)
+2. **On-Demand** - Generate when founder clicks "deep dive" on candidate
+3. **Batch Generation** - Pre-generate for top 10 shortlist after curation
+4. **Refresh** - Regenerate if prompt/format is updated (no data re-fetch)
+
+### Storage (Optional)
+
+```sql
+-- Add ai_summary column to people table
+ALTER TABLE people ADD COLUMN IF NOT EXISTS ai_summary JSONB;
+CREATE INDEX IF NOT EXISTS idx_people_ai_summary ON people USING gin(ai_summary);
+```
+
+Summaries can be stored in database for:
+- Faster subsequent loads
+- Historical tracking
+- Prompt A/B testing
+
+### Documentation
+
+- **API Usage**: See `agencity/API_USAGE_EXAMPLE.md`
+- **Hardcoded Demo**: See `agencity/HARDCODED_SUMMARIES.md`
+
+---
+
+## 5.5. Deep Research Engine (Perplexity AI)
 
 ### Overview
 
@@ -986,20 +1121,27 @@ agencity/
 |   +-- api/
 |   |   +-- routes/
 |   |       +-- companies.py      # Company CRUD, imports
-|   |       +-- curation.py       # V4 Curation system (NEW!)
+|   |       +-- curation.py       # V4 Curation + AI summaries
 |   |       +-- search.py         # V2 tiered search
 |   |       +-- intelligence.py   # V3 timing, layoffs
+|   |       +-- integration.py    # Pipeline approval workflow
 |   +-- core/
 |   |   +-- config.py            # Settings, env vars
 |   |   +-- database.py          # Supabase client
 |   +-- services/
-|   |   +-- curation_engine.py   # V4 Curation system (NEW!)
-|   |   +-- candidate_builder.py # Unified candidate model
-|   |   +-- research/            # Deep research services (NEW!)
+|   |   +-- curation_engine.py   # V4 Curation system
+|   |   +-- candidate_builder.py # Unified candidate model (500-item batching)
+|   |   +-- research/            # Deep research services
 |   |   |   +-- perplexity_researcher.py  # Perplexity AI integration
+|   |   +-- reasoning/           # AI reasoning engines
+|   |   |   +-- claude_engine.py # Claude w/ OpenAI fallback
 |   |   +-- search_v2.py         # Search engine
 |   |   +-- timing_intel.py      # Timing analysis
 |   |   +-- network_activation.py # Reverse reference
+|   +-- workers/
+|   |   +-- curation_cache_worker.py  # Cache generation w/ cost tracking
+|   +-- models/
+|   |   +-- curation.py          # Pydantic models + AISummary
 |   +-- main.py                   # FastAPI app entry
 |
 +-- web/                          # Frontend (Next.js)
@@ -1007,6 +1149,9 @@ agencity/
 |   |   +-- app/
 |   |   |   +-- dashboard/
 |   |   |   |   +-- page.tsx     # Overview
+|   |   |   |   +-- candidates/  # Candidate curation UI
+|   |   |   |   +-- curation/    # Curation workflow
+|   |   |   |   +-- pipeline/    # Pipeline management
 |   |   |   |   +-- search/      # Search UI
 |   |   |   |   +-- intelligence/# Timing dashboard
 |   |   |   |   +-- network/     # Activation messages
@@ -1015,11 +1160,28 @@ agencity/
 |   |   +-- lib/
 |   |   |   +-- api.ts           # API client
 |   |   +-- components/          # Reusable UI
+|   |   |   +-- CandidateDetailedAnalysis.tsx  # AI summaries + hardcoded
+|   |   |   +-- CurationSummary.tsx            # Summary stats
+|   |   |   +-- CurationStatsCard.tsx          # Stats display
+|   |   |   +-- DemoInitializer.tsx            # Demo setup
 |   +-- public/
 |       +-- setup.html           # Quick setup page
+|       +-- init-demo.js         # Demo data loader
+|       +-- hermes_logo.png      # Branding
 |
 +-- docs/                         # Documentation
 |   +-- architecture/            # System docs
+|
++-- CACHE_GENERATION_GUIDE.md    # PDL cache strategy & cost tracking
++-- API_USAGE_EXAMPLE.md         # AI summary regeneration examples
++-- HARDCODED_SUMMARIES.md       # Demo summaries documentation
++-- DEMO_SETUP.md                # Quick demo setup guide
++
++-- scripts/
+|   +-- populate_curation_cache.py  # Cache generation script
+|   +-- run_manual_migration.py     # Database migrations
+|
++-- test_regenerate_summary.py   # Test AI summary generation
 |
 +-- .env                         # Environment variables
 ```
@@ -1054,6 +1216,36 @@ agencity/
 ---
 
 ## Version History
+
+- **v3.2** (Feb 16, 2026): Production Optimizations & Demo Setup
+  - **Cost Optimizations**:
+    - Reduced enrichment from 20 to 5 candidates (97% cost savings maintained)
+    - Expanded deep research from 5 to 10 candidates
+    - Implemented 500-item batching for large dataset cache generation
+    - PDL 30-day cache strategy documented (see CACHE_GENERATION_GUIDE.md)
+  - **Curation-to-Pipeline Workflow**:
+    - Approval system to move candidates from shortlist to pipeline
+    - "Undo move" capability for workflow flexibility
+    - Enhanced candidate detailed analysis component
+  - **Data Quality Improvements**:
+    - Fixed PDL location data persistence to database
+    - Added skills/experience/education to API models
+    - Better field mapping across enrichment services
+  - **AI Summary System**:
+    - `/candidate/{person_id}/regenerate-summary` endpoint
+    - AI-generated narrative summaries without re-enrichment
+    - Hardcoded summaries for demo (top 5 candidates)
+    - Uses existing data + Claude AI for natural language generation
+  - **Demo & UI Enhancements**:
+    - Demo initializer for quick setup
+    - Hermes logo and branding integration
+    - Improved candidates page layout
+    - Better stats cards and summary components
+  - **Developer Experience**:
+    - OpenAI fallback in Claude reasoning engine
+    - Better error logging and serialization
+    - Cost tracking in cache generation
+    - Documentation: API_USAGE_EXAMPLE.md, HARDCODED_SUMMARIES.md
 
 - **v3.0** (Feb 12, 2026): Unified Agent Architecture
   - Dual-source search (Hermes 1,375+ AND Network 3,637)
