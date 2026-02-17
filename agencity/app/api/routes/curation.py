@@ -7,7 +7,9 @@ from typing import Optional
 from app.models.curation import (
     CurationRequest,
     CurationResponse,
-    CuratedCandidate
+    CuratedCandidate,
+    AISummary,
+    RegenerateSummaryResponse
 )
 from app.services.curation_engine import CandidateCurationEngine
 from app.core.database import get_supabase_client
@@ -192,7 +194,7 @@ async def record_founder_feedback(
         update_data["pipeline_status"] = "sourced"
     elif decision == "pass":
         update_data["pipeline_status"] = None # Remove from pipeline if passed
-    
+
     # Update candidate status in people table
     try:
         supabase.table("people").update(update_data).eq("id", person_id).execute()
@@ -208,3 +210,98 @@ async def record_founder_feedback(
         'role_id': role_id,
         'decision': decision
     }
+
+
+@router.post("/candidate/{person_id}/regenerate-summary", response_model=RegenerateSummaryResponse)
+async def regenerate_ai_summary(
+    person_id: str,
+    role_id: str,
+    engine: CandidateCurationEngine = Depends(get_curation_engine)
+):
+    """
+    Regenerate AI summary for a candidate without re-enriching.
+
+    Uses existing candidate data and Claude AI to generate a fresh
+    narrative summary. Does NOT re-enrich via PDL or other sources.
+
+    Example use case: Nikhil Hooda's summary shows rules-based template,
+    but you want a more natural AI-generated narrative.
+    """
+
+    try:
+        # Build candidate from existing data
+        from app.services.candidate_builder import CandidateBuilder
+        supabase = get_supabase_client()
+        builder = CandidateBuilder(supabase)
+        candidate = await builder.build(person_id)
+
+        # Get role and company context
+        role = await engine._get_role(role_id)
+        company_dna = await engine._get_company_dna(role['company_id'])
+
+        # Use Claude to generate AI summary
+        from app.services.reasoning.claude_engine import ClaudeReasoningEngine
+        claude_engine = ClaudeReasoningEngine()
+
+        # Prepare candidate data for Claude
+        candidate_data = {
+            'id': person_id,
+            'full_name': candidate.full_name,
+            'current_title': candidate.current_title,
+            'current_company': candidate.current_company,
+            'location': candidate.location,
+            'headline': candidate.headline,
+            'skills': candidate.skills,
+            'experience': [exp for exp in (candidate.experience or [])],
+            'education': [edu for edu in (candidate.education or [])]
+        }
+
+        # Get AI analysis
+        analysis = await claude_engine.analyze_candidate(
+            candidate=candidate_data,
+            role_title=role['title'],
+            required_skills=role.get('required_skills', []),
+            company_context={
+                'name': company_dna.get('company_name', ''),
+                'stage': company_dna.get('stage', ''),
+                'values': company_dna.get('values', [])
+            }
+        )
+
+        # Extract the AI-generated summary components
+        ai_summary = AISummary(
+            overall_assessment=analysis.overall_assessment,
+            why_consider=analysis.why_consider,
+            concerns=analysis.concerns,
+            unknowns=analysis.unknowns,
+            skill_reasoning=analysis.skill_reasoning,
+            trajectory_reasoning=analysis.trajectory_reasoning,
+            fit_reasoning=analysis.fit_reasoning,
+            timing_reasoning=analysis.timing_reasoning
+        )
+
+        # Optionally store in database for future use
+        # You can add a new 'ai_summary' JSONB column to the people table
+        # and store the generated summary there
+        try:
+            supabase.table("people").update({
+                "ai_summary": ai_summary.dict(),
+                "updated_at": "now()"
+            }).eq("id", person_id).execute()
+        except Exception as e:
+            print(f"Warning: Could not store AI summary: {e}")
+            # Continue even if storage fails
+
+        return RegenerateSummaryResponse(
+            status='success',
+            person_id=person_id,
+            full_name=candidate.full_name,
+            ai_summary=ai_summary,
+            message='AI summary regenerated successfully'
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to regenerate summary: {str(e)}"
+        )

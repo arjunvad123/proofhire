@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { Stepper } from '@/components/ui/stepper';
 import { OnboardingProvider, useOnboarding } from '@/lib/onboarding-context';
 import { CompanyInfoStep } from './steps/company-info';
@@ -62,8 +63,15 @@ function OnboardingContent() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-4 py-12">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">
+        <div className="text-center mb-8 flex flex-col items-center">
+          <Image
+            src="/hermes_logo.png"
+            alt="Agencity"
+            width={48}
+            height={48}
+            className="rounded-xl shadow-md mb-4"
+          />
+          <h1 className="text-3xl font-bold text-gray-900 font-ivy-journal tracking-tight">
             Welcome to Agencity
           </h1>
           <p className="mt-2 text-gray-600">

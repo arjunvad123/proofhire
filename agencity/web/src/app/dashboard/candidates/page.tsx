@@ -17,8 +17,19 @@ export default function CandidatesPage() {
         totalSearched: number;
         enrichedCount: number;
         avgScore: number;
+        processingTime: number;
     } | null>(null);
     const [expandedCandidates, setExpandedCandidates] = useState<Set<string>>(new Set());
+
+    const toggleCandidateExpansion = (candidateId: string) => {
+        const newExpanded = new Set(expandedCandidates);
+        if (newExpanded.has(candidateId)) {
+            newExpanded.delete(candidateId);
+        } else {
+            newExpanded.add(candidateId);
+        }
+        setExpandedCandidates(newExpanded);
+    };
 
     // Shared State
     const [mounted, setMounted] = useState(false);
@@ -65,11 +76,11 @@ export default function CandidatesPage() {
         }
     }
 
-    async function loadCuratedCandidates(roleId: string) {
+    async function loadCuratedCandidates(roleId: string, force: boolean = false) {
         setLoading(true);
         try {
-            console.log('Loading curated candidates for role:', roleId);
-            const result = await curateCandidates(companyId, roleId, { limit: 30 });
+            console.log('Loading curated candidates for role:', roleId, force ? '(FORCE REFRESH)' : '');
+            const result = await curateCandidates(companyId, roleId, { limit: 30, forceRefresh: force });
             console.log('Curation result:', result);
             console.log('Candidates count:', result.candidates?.length || 0);
             console.log('Processing time:', result.processing_time_seconds, 'seconds');
@@ -94,12 +105,21 @@ export default function CandidatesPage() {
                 console.warn('💡 Tip: Run cache generation script for instant loading next time');
             }
 
+            // DEBUG: Log first 3 candidates to check location data
+            console.log('📊 First 3 candidates received:');
+            result.candidates?.slice(0, 3).forEach((c, i) => {
+                console.log(`  ${i + 1}. ${c.full_name}`);
+                console.log(`     Location: "${c.location}" (type: ${typeof c.location})`);
+                console.log(`     Has location field: ${c.hasOwnProperty('location')}`);
+            });
+
             setCuratedCandidates(result.candidates || []);
 
             setCurationMetadata({
                 totalSearched: result.total_searched || 0,
                 enrichedCount: result.total_enriched || 0,
-                avgScore: Math.round(result.average_fit_score || 0)
+                avgScore: Math.round(result.average_fit_score || 0),
+                processingTime: result.processing_time_seconds || 0
             });
         } catch (error) {
             console.error('Failed to curate candidates:', error);
@@ -277,7 +297,7 @@ export default function CandidatesPage() {
                     enriched={curationMetadata.enrichedCount}
                     shortlisted={curatedCandidates.length}
                     avgScore={curationMetadata.avgScore}
-                    processingTime={120}
+                    processingTime={curationMetadata.processingTime}
                     aiAnalyzedCount={curatedCandidates.filter(c => c.context?.claude_reasoning).length}
                 />
             )}
@@ -338,15 +358,18 @@ export default function CandidatesPage() {
                 )}
 
                 <button
-                    onClick={() => isMatchMode ? loadCuratedCandidates(selectedRoleId) : loadData(companyId)}
-                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-300 rounded-md hover:bg-gray-100"
+                    onClick={() => isMatchMode ? loadCuratedCandidates(selectedRoleId, true) : loadData(companyId)}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-300 rounded-md hover:bg-gray-100 flex items-center gap-2"
                 >
-                    Refresh
+                    <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    {loading ? 'Refreshing...' : 'Refresh'}
                 </button>
             </div>
 
             {/* List */}
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+            <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
                 {loading ? (
                     <div className="p-12 text-center">
                         <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-200 border-t-blue-600 mb-2"></div>
@@ -393,27 +416,26 @@ export default function CandidatesPage() {
                     </div>
                 ) : (
                     <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
+                        <thead className="bg-gray-50/50 border-b border-gray-100">
                             <tr>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Candidate</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Role</th>
+                                <th scope="col" className="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Candidate</th>
+                                <th scope="col" className="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Role</th>
 
                                 {isMatchMode ? (
                                     <>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Match Score</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Analysis</th>
+                                        <th scope="col" className="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Skills</th>
                                     </>
                                 ) : (
                                     <>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                                        <th scope="col" className="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
+                                        <th scope="col" className="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Source</th>
                                     </>
                                 )}
 
-                                <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                <th scope="col" className="px-4 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest">Actions</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="bg-white divide-y divide-gray-100">
                             {displayedItems.flatMap((item: any) => {
                                 // Unified data access for Person vs CuratedCandidate
                                 const id = item.id || item.person_id;
@@ -421,138 +443,91 @@ export default function CandidatesPage() {
                                 const candidate = item;
                                 const isExpanded = expandedCandidates.has(id);
 
-                                const toggleExpand = () => {
-                                    setExpandedCandidates(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(id)) {
-                                            next.delete(id);
-                                        } else {
-                                            next.add(id);
-                                        }
-                                        return next;
-                                    });
-                                };
-
                                 const rows = [
-                                    <tr key={`${id}-main`} className="hover:bg-gray-50/80 transition-colors group">
-                                        <td className="px-6 py-5 whitespace-nowrap">
+                                    <tr
+                                        key={`${id}-main`}
+                                        onClick={() => toggleCandidateExpansion(id)}
+                                        className={`transition-all duration-200 group cursor-pointer ${isExpanded ? 'bg-blue-50/40' : 'hover:bg-gray-50/80'}`}
+                                    >
+                                        <td className="px-4 py-4">
                                             <div className="flex items-center">
-                                                <div className="flex-shrink-0 h-10 w-10">
-                                                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-semibold shadow-sm ring-2 ring-white ring-offset-2">
+                                                <div className="flex-shrink-0 h-9 w-9">
+                                                    <div className="h-9 w-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-xs font-bold shadow-sm ring-1 ring-gray-200">
                                                         {candidate.full_name?.charAt(0)}
                                                     </div>
                                                 </div>
-                                                <div className="ml-4">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{candidate.full_name}</div>
+                                                <div className="ml-3">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="text-sm font-bold text-gray-900 leading-none group-hover:text-blue-600 transition-colors forced-wrap">{candidate.full_name}</div>
                                                         {/* Enrichment indicators */}
                                                         {isCurated && candidate.context?.enrichment_details?.sources && candidate.context.enrichment_details.sources.length > 0 && (
-                                                            <div className="flex items-center gap-1">
+                                                            <div className="flex items-center gap-0.5">
                                                                 {candidate.context.enrichment_details.sources.includes('pdl') && (
-                                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-700 rounded border border-blue-200 uppercase" title="PDL Enriched">
+                                                                    <span className="px-1 py-0.5 text-[8px] font-black bg-blue-50 text-blue-600 rounded-sm border border-blue-100 uppercase" title="PDL Enriched">
                                                                         PDL
                                                                     </span>
                                                                 )}
                                                                 {candidate.context.enrichment_details.sources.includes('perplexity') && (
-                                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 rounded border border-purple-200 uppercase" title="Perplexity Research">
+                                                                    <span className="px-1 py-0.5 text-[8px] font-black bg-purple-50 text-purple-600 rounded-sm border border-purple-100 uppercase" title="Perplexity Research">
                                                                         AI
                                                                     </span>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
-                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                        </svg>
-                                                        {candidate.location || 'Remote'}
-                                                    </div>
+                                                    {candidate.location && (
+                                                        <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1 font-medium italic">
+                                                            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                            </svg>
+                                                            {candidate.location}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-5 whitespace-nowrap">
-                                            <div className="text-sm font-medium text-gray-900">{candidate.current_title || 'Unknown Title'}</div>
-                                            <div className="text-xs text-gray-500 mt-0.5">{candidate.current_company || 'Unknown Company'}</div>
+                                        <td className="px-4 py-4">
+                                            <div className="text-sm font-semibold text-gray-900 leading-tight">{candidate.current_title || 'Unknown Title'}</div>
+                                            <div className="text-[11px] text-gray-500 mt-1 font-medium">{candidate.current_company || 'Unknown Company'}</div>
                                         </td>
 
                                         {isCurated ? (
-                                            <>
-                                                <td className="px-6 py-5 whitespace-nowrap">
-                                                    <div className="flex flex-col gap-1.5">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="relative w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                                <div
-                                                                    className={`absolute top-0 left-0 h-full rounded-full ${candidate.match_score > 75 ? 'bg-green-500' :
-                                                                        candidate.match_score > 50 ? 'bg-amber-500' : 'bg-red-500'
-                                                                        }`}
-                                                                    style={{ width: `${candidate.match_score}%` }}
-                                                                ></div>
-                                                            </div>
-                                                            <span className="text-sm font-bold text-gray-900">{Math.round(candidate.match_score)}%</span>
-                                                        </div>
-                                                        {/* Show Claude AI score if available */}
-                                                        {candidate.context?.claude_reasoning ? (
-                                                            <div className="text-[10px] text-indigo-600 uppercase tracking-tight font-bold flex items-center gap-1">
-                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                                                                </svg>
-                                                                AI: {Math.round(candidate.context.claude_reasoning.overall_score)}% ({Math.round(candidate.context.claude_reasoning.confidence * 100)}% conf)
-                                                            </div>
-                                                        ) : (
-                                                            <div className="text-[10px] text-gray-500 uppercase tracking-tight font-medium">
-                                                                Confidence: {Math.round(candidate.fit_confidence * 100)}%
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-5">
-                                                    <div className="flex flex-col gap-2">
-                                                        {candidate.context?.warm_path && (
-                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200 uppercase tracking-wide w-fit">
-                                                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                                    <path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.88-.214.33-.403.713-.57 1.116-.334.804-.614 1.768-.84 2.734a31.365 31.365 0 00-.613 3.58 2.64 2.64 0 01-.945-1.067c-.328-.68-.398-1.334-.398-1.817a1 1 0 00-1.463-.89c-.334.18-.59.458-.802.756-.212.3-.393.649-.553 1.02-.32.743-.585 1.637-.78 2.533A17.14 17.14 0 006 12a6 6 0 0012 0c0-1.638-.214-3.176-.605-4.553-.194-.684-.447-1.32-.764-1.86a10.151 10.151 0 00-1.026-1.503 9.4 9.4 0 00-.775-.815zM9.383 8.56c.06-.242.13-.487.211-.735.158-.485.342-.924.536-1.327a33.723 33.723 0 01.373-.75c.08.158.136.326.172.503.116.575.148 1.25.101 1.956a1 1 0 00.518.887 2.646 2.646 0 011.054 1.4c.159.49.236 1.045.236 1.606 0 .02-.001.04-.002.059a1 1 0 001.815.54 3.791 3.791 0 00.176-.411 1.64 1.54 0 00.101-.645l-.018-.1c-.02-.1-.043-.198-.07-.294A15.176 15.176 0 0014 12c0 1.105-.895 2-2 2s-2-.895-2-2c0-.528.204-1.01.537-1.37a1 1 0 00.063-1.328 1 1 0 00-.1-.137l-.022-.023c-.345-.375-.58-.85-.637-1.37a1.64 1.64 0 01.024-.54z" clipRule="evenodd" />
-                                                                </svg>
-                                                                {candidate.context.warm_path}
+                                            <td className="px-4 py-4">
+                                                <div className="flex flex-wrap gap-1.5 max-w-[280px]">
+                                                    {(() => {
+                                                        // Get skills from direct field first (PDL enrichment), then fall back to other sources
+                                                        let skills: string[] = [];
+
+                                                        if (candidate.skills && candidate.skills.length > 0) {
+                                                            skills = candidate.skills;
+                                                        } else if (candidate.context?.detailed_analysis?.skills_match?.matched?.length > 0) {
+                                                            skills = candidate.context.detailed_analysis.skills_match.matched;
+                                                        } else if (candidate.context?.why_consider) {
+                                                            for (const item of candidate.context.why_consider) {
+                                                                if (typeof item === 'object' && item.category === 'Skills Match' && item.points) {
+                                                                    skills = item.points.map((p: string) => p.replace(/^[✓~]\s*/, '').trim());
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        if (skills.length === 0) {
+                                                            return <span className="text-[10px] text-gray-400 italic">No skills listed</span>;
+                                                        }
+
+                                                        return skills.slice(0, 4).map((skill: string) => (
+                                                            <span key={skill} className="px-2 py-0.5 bg-gray-50 text-gray-600 text-[9px] font-bold rounded border border-gray-200 uppercase tracking-wide">
+                                                                {skill}
                                                             </span>
-                                                        )}
-                                                        {candidate.context?.why_consider?.[0] && (() => {
-                                                            const rawReason = candidate.context.why_consider[0];
-                                                            const text = typeof rawReason === 'string' ? rawReason : (rawReason.points?.[0] || rawReason.category);
-                                                            const cleanText = stripMarkdown(text);
-                                                            return (
-                                                                <span className="text-[11px] text-gray-600 leading-relaxed max-w-sm line-clamp-2 italic">
-                                                                    &quot;{cleanText}&quot;
-                                                                </span>
-                                                            );
-                                                        })()}
-                                                        <button
-                                                            onClick={toggleExpand}
-                                                            className="text-xs text-blue-600 hover:text-blue-800 font-medium text-left w-fit flex items-center gap-1 mt-1"
-                                                        >
-                                                            {isExpanded ? (
-                                                                <>
-                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                                                                    </svg>
-                                                                    Hide full analysis
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                                                    </svg>
-                                                                    Show full analysis
-                                                                </>
-                                                            )}
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </>
+                                                        ));
+                                                    })()}
+                                                </div>
+                                            </td>
                                         ) : (
                                             <>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className={`px-2.5 py-0.5 inline-flex text-xs leading-4 font-semibold rounded-full capitalize
+                                                <td className="px-4 py-4">
+                                                    <span className={`px-2 py-0.5 inline-flex text-[10px] leading-4 font-bold rounded-full capitalize
                                                     ${candidate.status === 'hired' ? 'bg-green-100 text-green-800' :
                                                             candidate.status === 'rejected' ? 'bg-red-100 text-red-800' :
                                                                 candidate.status === 'contacted' ? 'bg-blue-100 text-blue-800' :
@@ -560,7 +535,7 @@ export default function CandidatesPage() {
                                                         {candidate.status || 'Sourced'}
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
+                                                <td className="px-4 py-4 text-[10px] text-gray-500 font-medium whitespace-nowrap">
                                                     <div className="flex flex-wrap gap-1">
                                                         {candidate.is_from_network && (
                                                             <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-100">Network</span>
@@ -576,36 +551,55 @@ export default function CandidatesPage() {
                                             </>
                                         )}
 
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            {isCurated ? (
-                                                <div className="flex gap-2 justify-end">
-                                                    <button
-                                                        onClick={() => handleApprove(candidate)}
-                                                        className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors font-medium shadow-sm"
-                                                    >
-                                                        ✓ Yes
+                                        <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                            <div onClick={(e) => e.stopPropagation()} className="flex gap-2 justify-end items-center">
+                                                {isCurated ? (
+                                                    <>
+                                                        {candidate.linkedin_url && (
+                                                            <a
+                                                                href={candidate.linkedin_url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="px-2 py-1.5 text-[9px] bg-white text-blue-600 border border-blue-200 rounded hover:bg-blue-50 transition-colors font-bold uppercase tracking-wider flex items-center gap-1.5"
+                                                            >
+                                                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                                                                    <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.761 0 5-2.239 5-5v-14c0-2.761-2.239-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" />
+                                                                </svg>
+                                                                LI
+                                                            </a>
+                                                        )}
+                                                        <button
+                                                            onClick={() => handleApprove(candidate)}
+                                                            className="px-3 py-1.5 text-[10px] bg-green-600 text-white rounded hover:bg-green-700 transition-colors font-bold uppercase tracking-wider shadow-sm"
+                                                        >
+                                                            Yes
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleReject(candidate)}
+                                                            className="px-3 py-1.5 text-[10px] bg-gray-100 text-gray-600 border border-gray-200 rounded hover:bg-gray-200 transition-all font-bold uppercase tracking-wider shadow-sm"
+                                                        >
+                                                            No
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <button className="text-blue-600 hover:text-blue-900 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors">
+                                                        View Profile
                                                     </button>
-                                                    <button
-                                                        onClick={() => handleReject(candidate)}
-                                                        className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors font-medium shadow-sm"
-                                                    >
-                                                        ✗ No
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <button className="text-blue-600 hover:text-blue-900 border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors">
-                                                    View Profile
-                                                </button>
-                                            )}
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ];
 
-                                if (isCurated && isExpanded) {
+                                if (isExpanded) {
                                     rows.push(
-                                        <tr key={`${id}-expanded`} className="bg-gray-50">
-                                            <td colSpan={5} className="p-0">
-                                                <CandidateDetailedAnalysis candidate={candidate} />
+                                        <tr key={`${id}-expanded`} className="bg-gray-50/30">
+                                            <td colSpan={isMatchMode ? 4 : 5} className="px-6 py-0">
+                                                <div className="py-6 border-t border-gray-100">
+                                                    <CandidateDetailedAnalysis
+                                                        candidate={candidate}
+                                                    />
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -620,21 +614,23 @@ export default function CandidatesPage() {
             </div>
 
             {/* Toast Notification */}
-            {toast && (
-                <div className="fixed bottom-4 right-4 z-50 animate-slide-in">
-                    <div className={`px-4 py-3 rounded-lg shadow-lg border ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
-                        toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
-                            'bg-blue-50 border-blue-200 text-blue-800'
-                        }`}>
-                        <div className="flex items-center gap-2">
-                            <span className="text-lg">
-                                {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✗' : 'ℹ'}
-                            </span>
-                            <span className="font-medium">{toast.message}</span>
+            {
+                toast && (
+                    <div className="fixed bottom-4 right-4 z-50 animate-slide-in">
+                        <div className={`px-4 py-3 rounded-lg shadow-lg border ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
+                            toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
+                                'bg-blue-50 border-blue-200 text-blue-800'
+                            }`}>
+                            <div className="flex items-center gap-2">
+                                <span className="text-lg">
+                                    {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✗' : 'ℹ'}
+                                </span>
+                                <span className="font-medium">{toast.message}</span>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }

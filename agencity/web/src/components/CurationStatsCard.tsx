@@ -15,9 +15,17 @@ export function CurationStatsCard({
   processingTime = 120,
   aiAnalyzedCount,
 }: CurationStatsCardProps) {
-  const enrichmentRate = searched > 0 ? Math.round((enriched / searched) * 100) : 0;
-  const costSavings = 100 - enrichmentRate;
+  // Real enrichment rate with one decimal if it's small but not zero
+  const enrichmentRateRaw = searched > 0 ? (enriched / searched) * 100 : 0;
+  const enrichmentRate = enrichmentRateRaw < 0.1 && enrichmentRateRaw > 0 ? 0.1 : Math.round(enrichmentRateRaw);
+  const costSavings = 100 - Math.round(enrichmentRateRaw);
+
   const aiAnalyzedRate = shortlisted > 0 && aiAnalyzedCount ? Math.round((aiAnalyzedCount / shortlisted) * 100) : 0;
+
+  const formatProcessingTime = (seconds: number) => {
+    if (seconds < 60) return `${Math.round(seconds)}s processing`;
+    return `${Math.round(seconds / 60)} min processing`;
+  };
 
   return (
     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 shadow-sm">
@@ -27,7 +35,7 @@ export function CurationStatsCard({
           <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          ~{Math.round(processingTime / 60)} min processing
+          ~{formatProcessingTime(processingTime)}
         </span>
       </div>
 
@@ -65,13 +73,17 @@ export function CurationStatsCard({
           <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          Cost savings: <span className="text-green-700 font-bold">{costSavings}%</span> (enriched only top {enrichmentRate}%)
+          {costSavings > 0 ? (
+            <>Cost savings: <span className="text-green-700 font-bold">{costSavings}%</span> (enriched only top matches)</>
+          ) : (
+            <>Deep analysis mode: <span className="text-blue-700 font-bold">Comprehensive</span> (fully enriched)</>
+          )}
         </span>
         <span className="text-green-700 font-bold bg-green-50/50 px-2 py-1 rounded border border-green-200 flex items-center gap-1 uppercase tracking-tighter text-[10px]">
           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
           </svg>
-          Optimized enrichment strategy
+          Smart Enrichment Strategy
         </span>
       </div>
     </div>

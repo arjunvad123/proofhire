@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function Home() {
   return (
@@ -6,11 +7,15 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">A</span>
-            </div>
-            <span className="font-semibold text-xl text-white">Agencity</span>
+          <div className="flex items-center gap-3">
+            <Image
+              src="/hermes_logo.png"
+              alt="Agencity"
+              width={32}
+              height={32}
+              className="rounded-lg shadow-sm"
+            />
+            <span className="font-semibold text-xl text-white font-ivy-journal tracking-tight">Agencity</span>
           </div>
           <div className="flex items-center gap-4">
             <Link

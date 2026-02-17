@@ -178,6 +178,27 @@ class CurationResponse(BaseModel):
     metadata: Dict[str, Any]
 
 
+class AISummary(BaseModel):
+    """AI-generated narrative summary for a candidate."""
+    overall_assessment: str = Field(description="High-level narrative assessment")
+    why_consider: List[str] = Field(description="Key reasons to consider (AI-generated)")
+    concerns: List[str] = Field(description="Potential concerns or gaps")
+    unknowns: List[str] = Field(description="Information we don't have")
+    skill_reasoning: str = Field(description="Skills analysis")
+    trajectory_reasoning: str = Field(description="Career trajectory analysis")
+    fit_reasoning: str = Field(description="Cultural/stage fit analysis")
+    timing_reasoning: str = Field(description="Timing/readiness analysis")
+
+
+class RegenerateSummaryResponse(BaseModel):
+    """Response from regenerating AI summary."""
+    status: str
+    person_id: str
+    full_name: str
+    ai_summary: AISummary
+    message: str
+
+
 
 class UnifiedCandidate(BaseModel):
     """
