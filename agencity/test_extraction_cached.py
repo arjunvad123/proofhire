@@ -5,19 +5,27 @@ Test LinkedIn connection extraction using cached cookies.
 Uses the cookie cache from .linkedin_test_cache.json (created by
 scripts/save_test_auth.py) to avoid login and 2FA.
 
+If cookies are stale and LinkedIn shows "Welcome Back",
+uses the adaptive login flow to re-authenticate.
+
 Usage:
     python test_extraction_cached.py
 """
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.services.linkedin.stealth_browser import StealthBrowser
 from app.services.linkedin.human_behavior import GhostCursor
+from app.services.linkedin.credential_auth import LinkedInCredentialAuth, LoginState
 
 CACHE_PATH = Path(__file__).parent / ".linkedin_test_cache.json"
 
@@ -77,12 +85,57 @@ async def test_extraction():
         print(f"   Current URL: {current_url}")
 
         if "/login" in current_url or "/checkpoint" in current_url:
-            print("❌ Redirected to login/checkpoint - cookies may be invalid")
-            print("   Run: python scripts/save_test_auth.py")
-            # Take screenshot to see what's happening
-            await page.screenshot(path="login_redirect_debug.png")
-            print("   Screenshot saved: login_redirect_debug.png")
-            return
+            print("⚠️ Cookies stale - attempting adaptive re-auth...")
+
+            # Use the credential auth state machine to handle this
+            auth = LinkedInCredentialAuth()
+            email = os.getenv("LINKEDIN_TEST_EMAIL")
+            password = os.getenv("LINKEDIN_TEST_PASSWORD")
+
+            if not email or not password:
+                print("❌ LINKEDIN_TEST_EMAIL/PASSWORD not set in .env")
+                await page.screenshot(path="login_redirect_debug.png")
+                return
+
+            # Detect and handle login state
+            max_iterations = 10
+            for iteration in range(max_iterations):
+                state = await auth._detect_login_state(page, email)
+                print(f"   Login state: {state}")
+
+                if state == LoginState.LOGGED_IN:
+                    break
+                elif state == LoginState.WELCOME_BACK:
+                    clicked = await auth._handle_welcome_back(page, email)
+                    if not clicked:
+                        await auth._click_sign_in_another_account(page)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.LOGIN_FORM:
+                    await auth._fill_login_form(page, email, password)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.PASSWORD_ONLY:
+                    await auth._fill_password_only(page, password)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.TWO_FA:
+                    print("❌ 2FA required - run scripts/save_test_auth.py manually")
+                    await page.screenshot(path="2fa_required_debug.png")
+                    return
+                elif state == LoginState.ERROR:
+                    print("❌ Login error detected")
+                    await page.screenshot(path="login_error_debug.png")
+                    return
+                else:
+                    await asyncio.sleep(2)
+
+            # Update cookie cache with fresh cookies
+            fresh_cookies = await sb.context.cookies()
+            fresh_cache = auth._extract_linkedin_cookies(fresh_cookies)
+            with open(CACHE_PATH, "w") as f:
+                json.dump(fresh_cache, f, indent=2)
+            print(f"   ✅ Updated cookie cache with {len(fresh_cache)} cookies")
 
         print(f"   ✅ Feed loaded: {page.url}")
 
@@ -96,8 +149,71 @@ async def test_extraction():
         await asyncio.sleep(5)
 
         if "/login" in page.url or "/checkpoint" in page.url:
-            print("❌ Redirected to login/checkpoint - session invalid")
-            return
+            print("⚠️ Redirected to login - attempting adaptive re-auth...")
+
+            # Use the credential auth state machine to handle this
+            auth = LinkedInCredentialAuth()
+            email = os.getenv("LINKEDIN_TEST_EMAIL")
+            password = os.getenv("LINKEDIN_TEST_PASSWORD")
+
+            if not email or not password:
+                print("❌ LINKEDIN_TEST_EMAIL/PASSWORD not set in .env")
+                await page.screenshot(path="login_redirect_debug.png")
+                return
+
+            # Detect and handle login state
+            max_iterations = 10
+            for iteration in range(max_iterations):
+                state = await auth._detect_login_state(page, email)
+                print(f"   Login state: {state}")
+
+                if state == LoginState.LOGGED_IN:
+                    break
+                elif state == LoginState.WELCOME_BACK:
+                    clicked = await auth._handle_welcome_back(page, email)
+                    if not clicked:
+                        await auth._click_sign_in_another_account(page)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.LOGIN_FORM:
+                    await auth._fill_login_form(page, email, password)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.PASSWORD_ONLY:
+                    await auth._fill_password_only(page, password)
+                    await page.wait_for_load_state("load", timeout=15000)
+                    await asyncio.sleep(2)
+                elif state == LoginState.TWO_FA:
+                    print("❌ 2FA required - run scripts/save_test_auth.py manually")
+                    await page.screenshot(path="2fa_required_debug.png")
+                    return
+                elif state == LoginState.ERROR:
+                    print("❌ Login error detected")
+                    await page.screenshot(path="login_error_debug.png")
+                    return
+                else:
+                    await asyncio.sleep(2)
+
+            # Re-navigate to connections after auth
+            print("\n   Re-navigating to connections...")
+            await page.goto(
+                "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+                wait_until="load",
+                timeout=30000
+            )
+            await asyncio.sleep(5)
+
+            if "/login" in page.url or "/checkpoint" in page.url:
+                print("❌ Still redirected after re-auth - session truly invalid")
+                await page.screenshot(path="reauth_failed_debug.png")
+                return
+
+            # Update cookie cache with fresh cookies
+            fresh_cookies = await sb.context.cookies()
+            fresh_cache = auth._extract_linkedin_cookies(fresh_cookies)
+            with open(CACHE_PATH, "w") as f:
+                json.dump(fresh_cache, f, indent=2)
+            print(f"   ✅ Updated cookie cache with {len(fresh_cache)} cookies")
 
         print(f"   ✅ Connections loaded: {page.url}")
 
