@@ -449,3 +449,177 @@ Check the logs:
 ```bash
 ssh -i ~/.ssh/agencity-key.pem ubuntu@YOUR_IP 'sudo journalctl -u agencity -f'
 ```
+
+---
+
+## 🔗 LinkedIn Automation Testing
+
+### Quick Start
+
+```bash
+# 1. Run setup
+./quickstart.sh
+
+# 2. Set credentials
+export LINKEDIN_TEST_EMAIL="your-test@email.com"
+export LINKEDIN_TEST_PASSWORD="your-password"
+
+# 3. Run test
+python test_linkedin_flow.py
+```
+
+### LinkedIn Test Scripts
+
+#### `quickstart.sh`
+**One-command setup for LinkedIn automation**
+
+**What it does:**
+- Installs playwright + playwright-stealth
+- Installs Chromium browser
+- Creates browser_profiles/ and logs/ directories
+- Shows next steps
+
+**Usage:**
+```bash
+./quickstart.sh
+```
+
+#### `test_linkedin_flow.py`
+**Quick test of LinkedIn automation**
+
+**Tests:**
+1. Authentication with credentials + 2FA
+2. playwright-stealth (anti-detection)
+3. Connection extraction (10 connections)
+4. Warning detection system
+5. Persistent browser profiles
+
+**Usage:**
+```bash
+# With environment variables
+export LINKEDIN_TEST_EMAIL="test@email.com"
+export LINKEDIN_TEST_PASSWORD="password"
+python test_linkedin_flow.py
+
+# Or interactive (prompts for credentials)
+python test_linkedin_flow.py
+```
+
+**Expected Output:**
+```
+======================================================================
+PHASE 1: AUTHENTICATION TEST
+======================================================================
+
+🚀 Logging in as test@email.com...
+
+🔐 2FA Required
+Enter 6-digit verification code: 123456
+
+✅ Login successful!
+   Cookies extracted: 8 cookies
+   li_at: AQEDAR...
+
+======================================================================
+PHASE 2: CONNECTION EXTRACTION TEST (LIMIT: 10)
+======================================================================
+
+📊 Starting extraction...
+   [1/10] Found: Sarah Chen
+           Senior ML Engineer at Stripe
+...
+
+✅ All tests completed!
+```
+
+### LinkedIn Testing Workflow
+
+```bash
+# Step 1: Setup
+./quickstart.sh
+
+# Step 2: Create test account
+# - Go to LinkedIn and create account
+# - Use temp email: https://temp-mail.org
+# - Enable 2FA
+# - Wait 48 hours (recommended)
+
+# Step 3: Run quick test
+export LINKEDIN_TEST_EMAIL="test@email.com"
+export LINKEDIN_TEST_PASSWORD="password"
+python test_linkedin_flow.py
+
+# Step 4: Verify results
+ls -la ../browser_profiles/
+# Should see: test-session-123/
+
+# Step 5: Check for warnings
+cat ../logs/linkedin_automation.log
+# Should be empty or show no errors
+```
+
+### Docker Testing
+
+```bash
+# Build image
+docker build -t agencity-linkedin -f ../Dockerfile.test ..
+
+# Run test
+docker run --rm \
+  -e LINKEDIN_TEST_EMAIL="test@email.com" \
+  -e LINKEDIN_TEST_PASSWORD="password" \
+  -v $(pwd)/../logs:/app/logs \
+  -v $(pwd)/../browser_profiles:/app/browser_profiles \
+  agencity-linkedin python scripts/test_linkedin_flow.py
+```
+
+### Success Indicators
+
+✅ **Good Test:**
+```
+✅ Login successful
+✅ 10 connections extracted
+✅ No warnings detected
+✅ Profile directory created
+✅ Duration: 10-20 seconds
+```
+
+❌ **Bad Test:**
+```
+❌ CAPTCHA appeared
+❌ "Unusual activity" warning
+❌ Session expired immediately
+❌ No connections extracted
+```
+
+### Troubleshooting
+
+**Issue: "Module not found: playwright_stealth"**
+```bash
+pip install playwright-stealth
+```
+
+**Issue: "Chromium not installed"**
+```bash
+playwright install chromium
+```
+
+**Issue: CAPTCHA appears**
+1. Verify stealth: Visit bot.sannysoft.com
+2. Use different IP/proxy
+3. Wait 48h with test account
+
+**Issue: "Session expired"**
+- Re-run test to get fresh cookies
+- Check browser_profiles/ has Cookies file
+
+### Full Documentation
+
+For comprehensive testing:
+- Read: `../TESTING_GUIDE.md`
+- Architecture: `../docs/architecture/LINKEDIN_AUTOMATION.md`
+- Implementation: `../IMPLEMENTATION_COMPLETE.md`
+
+---
+
+**Remember:** Always use test accounts, never personal LinkedIn accounts!

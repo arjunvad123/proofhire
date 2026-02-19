@@ -102,7 +102,10 @@ class LinkedInConnectionExtractor:
                         wait_until='load',
                         timeout=30000
                     )
-                    await asyncio.sleep(2)  # Wait for dynamic content
+
+                    # Wait for React to render and connections to appear
+                    # LinkedIn lazy-loads content, so we need to wait and scroll
+                    await self._wait_for_connections_to_load(page)
 
                     # Verify we're logged in
                     if not await self._is_logged_in(page):
@@ -219,6 +222,36 @@ class LinkedInConnectionExtractor:
 
         return connections
 
+    async def _wait_for_connections_to_load(self, page: Page) -> None:
+        """
+        Wait for LinkedIn to render connection cards.
+        LinkedIn uses React and lazy loading, so we need to wait and potentially scroll.
+        """
+        # Try multiple possible selectors (LinkedIn may change their HTML)
+        possible_selectors = [
+            'li.mn-connection-card',
+            'li[class*="reusable-search__result"]',
+            'div.scaffold-finite-scroll__content li',
+            'ul[class*="list"] > li[class*="list-item"]'
+        ]
+
+        # Wait up to 10 seconds for any connection cards to appear
+        for attempt in range(10):
+            for selector in possible_selectors:
+                count = await page.locator(selector).count()
+                if count > 0:
+                    # Found connections! Wait a bit more for more to load
+                    await asyncio.sleep(2)
+                    return
+
+            # No connections yet, wait and try a small scroll to trigger lazy loading
+            await asyncio.sleep(1)
+            if attempt == 3:  # After 3 seconds, try scrolling
+                await page.evaluate('window.scrollBy(0, 500)')
+                await asyncio.sleep(0.5)
+
+        # If we get here, no connections found - let the extraction handle it
+
     async def _extract_visible_connections(self, page: Page) -> List[Dict[str, Any]]:
         """
         Extract connection data from currently visible connection cards.
@@ -231,55 +264,71 @@ class LinkedInConnectionExtractor:
         """
         connections = []
 
-        # LinkedIn connection card selectors (may need updating)
-        card_selector = 'li.mn-connection-card'
+        # LinkedIn uses dynamic class names, so we need to find cards by structure
+        # Connection cards have:
+        #  - A div with data-view-name="connections-list"
+        #  - Inside are divs with a profile link (a[href*="/in/"])
+        #  - Each card has componentkey starting with "auto-component-"
 
-        # Get all visible cards
-        cards = await page.locator(card_selector).all()
+        # Use JavaScript to find connection cards more reliably
+        cards_data = await page.evaluate('''() => {
+            // Find all divs that contain profile links
+            const profileLinks = document.querySelectorAll('a[href*="/in/"]');
+            const cards = [];
 
-        for card in cards:
-            try:
-                # Extract data from card
-                name = await self._safe_text_content(
-                    card, '.mn-connection-card__name'
-                )
+            profileLinks.forEach(link => {
+                // Find the card container - look for parent with componentkey
+                let container = link.closest('[componentkey^="auto-component"]');
 
-                occupation = await self._safe_text_content(
-                    card, '.mn-connection-card__occupation'
-                )
+                if (container && !cards.includes(container)) {
+                    // Extract data directly from HTML
+                    const nameLink = container.querySelector('a.de3d5865.ee709ba4, a[href*="/in/"] p a');
+                    const name = nameLink ? nameLink.textContent.trim() : null;
 
-                # Extract LinkedIn URL from link
-                link = await card.locator('a[href*="/in/"]').first
-                url = await link.get_attribute('href') if link else None
+                    const headlineEl = container.querySelector('p[class*="fed20de1"], div.bab11c20 p');
+                    const headline = headlineEl ? headlineEl.textContent.trim() : null;
 
-                # Clean URL (remove query params)
-                if url:
-                    url = url.split('?')[0]
-                    if not url.startswith('http'):
-                        url = f'https://www.linkedin.com{url}'
+                    const profileLink = container.querySelector('a[href*="/in/"]');
+                    const url = profileLink ? profileLink.href : null;
 
-                # Extract profile image
-                img = await card.locator('img').first
-                img_url = await img.get_attribute('src') if img else None
+                    const img = container.querySelector('img[alt*="profile picture"]');
+                    const imgUrl = img ? img.src : null;
 
-                # Parse occupation into title and company
-                title, company = self._parse_occupation(occupation)
-
-                connection = {
-                    'full_name': name,
-                    'linkedin_url': url,
-                    'current_title': title,
-                    'current_company': company,
-                    'headline': occupation,
-                    'profile_image_url': img_url,
-                    'extracted_at': datetime.now(timezone.utc).isoformat()
+                    if (name && url) {
+                        cards.push({
+                            name,
+                            headline,
+                            url,
+                            imgUrl
+                        });
+                    }
                 }
+            });
 
-                connections.append(connection)
+            return cards;
+        }''')
 
-            except Exception as e:
-                # Skip cards that fail to parse
-                continue
+        # Convert JavaScript results to connection objects
+        for card_data in cards_data:
+            # Clean URL (remove query params)
+            url = card_data['url']
+            if url:
+                url = url.split('?')[0]
+
+            # Parse headline into title and company
+            title, company = self._parse_occupation(card_data['headline'])
+
+            connection = {
+                'full_name': card_data['name'],
+                'linkedin_url': url,
+                'current_title': title,
+                'current_company': company,
+                'headline': card_data['headline'],
+                'profile_image_url': card_data['imgUrl'],
+                'extracted_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            connections.append(connection)
 
         return connections
 
@@ -339,9 +388,17 @@ class LinkedInConnectionExtractor:
 
     async def _is_logged_in(self, page: Page) -> bool:
         """Check if user is logged in."""
-        # Check for LinkedIn nav bar
+        # Check if we're on the connections page (not redirected to login)
+        url = page.url
+        if '/login' in url or '/checkpoint' in url:
+            return False
+        # If we're on /mynetwork, we're logged in
+        if '/mynetwork' in url:
+            return True
+        # Also check for navigation elements as fallback
         try:
-            nav = await page.locator('nav.global-nav').count()
+            # New LinkedIn uses different selectors
+            nav = await page.locator('nav, header[role="banner"]').count()
             return nav > 0
         except:
             return False

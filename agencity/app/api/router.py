@@ -4,7 +4,7 @@ API router - combines all route modules.
 
 from fastapi import APIRouter
 
-from app.api.routes import conversations, shortlists, slack, companies, search, search_v2, search_v3, intelligence, curation, unified, integration
+from app.api.routes import conversations, shortlists, slack, companies, search, search_v2, search_v3, intelligence, curation, unified, integration, linkedin
 
 api_router = APIRouter()
 
@@ -20,3 +20,4 @@ api_router.include_router(search_v3.router, tags=["search-v3"])  # V3 (hybrid ex
 api_router.include_router(unified.router, tags=["unified"])  # ⭐ UNIFIED (replaces all above)
 api_router.include_router(intelligence.router, tags=["intelligence"])  # Intelligence system (legacy)
 api_router.include_router(integration.router, tags=["integration"])  # ProofHire integration
+api_router.include_router(linkedin.router, tags=["linkedin"])  # LinkedIn automation

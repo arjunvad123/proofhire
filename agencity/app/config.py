@@ -78,6 +78,20 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-in-production"
     access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
 
+    # LinkedIn Automation
+    linkedin_session_expiry_days: int = 30
+    linkedin_daily_message_limit: int = 50
+    linkedin_daily_enrichment_limit: int = 100
+
+    # Unipile API (optional - for faster enrichment)
+    unipile_api_key: str = ""
+    unipile_base_url: str = "https://api.unipile.com/api/v1"
+
+    # Residential Proxy (for scraper pool)
+    proxy_provider: str = ""  # smartproxy, brightdata, etc.
+    proxy_username: str = ""
+    proxy_password: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
