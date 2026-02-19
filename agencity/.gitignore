@@ -56,3 +56,17 @@ coverage.xml
 exports/
 tmp/
 temp/
+
+# Browser profiles (persistent session storage)
+browser_profiles/
+
+# Test screenshots and debug files
+*.png
+*.html
+*_test.py
+diagnose_*.py
+save_*.py
+extract_*.py
+find_*.py
+get_*.py
+inspect_*.py

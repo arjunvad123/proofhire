@@ -2,7 +2,7 @@
 
 ## Technical Architecture for Network Intelligence & Outreach
 
-**Version 2.0** | February 2026 | Status: Production Ready
+**Version 3.3** | February 2026 | Status: Stealth Implementation Complete
 
 ---
 
@@ -16,23 +16,26 @@ This document outlines Agencity's LinkedIn automation system that enables:
 
 **Key Differentiator**: Zero-friction onboarding (30 seconds) + Comet-inspired safety + smart prioritization that delivers actionable shortlists in 2 hours instead of 4 days.
 
-**Architecture Philosophy**: Use **Playwright + playwright-stealth** with persistent browser profiles and human behavior simulation. Conservative rate limits and warning detection minimize risk of account restrictions.
+**Architecture Philosophy**: Use **Playwright + playwright-stealth** with persistent browser profiles, **ghost cursor** for human behavior simulation, and comprehensive anti-detection measures. Conservative rate limits and warning detection minimize risk of account restrictions.
+
+**Latest Update (v3.3)**: Successfully implemented StealthBrowser module with ghost cursor integration. Session invalidation issue **RESOLVED** - connections page now loads without authentication redirects.
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Phase 1: Session Authentication](#2-phase-1-session-authentication)
-3. [Phase 2: Connection Extraction](#3-phase-2-connection-extraction)
-4. [Phase 3: Smart Prioritization](#4-phase-3-smart-prioritization)
-5. [Phase 4: Profile Enrichment](#5-phase-4-profile-enrichment)
-6. [Phase 5: DM Automation](#6-phase-5-dm-automation)
-7. [Risk Mitigation](#7-risk-mitigation)
-8. [Database Schema](#8-database-schema)
-9. [API Reference](#9-api-reference)
-10. [Cost Analysis](#10-cost-analysis)
-11. [Implementation & Testing Plan](#11-implementation--testing-plan)
+2. [Stealth & Anti-Detection System](#2-stealth--anti-detection-system)
+3. [Phase 1: Session Authentication](#3-phase-1-session-authentication)
+4. [Phase 2: Connection Extraction](#4-phase-2-connection-extraction)
+5. [Phase 3: Smart Prioritization](#5-phase-3-smart-prioritization)
+6. [Phase 4: Profile Enrichment](#6-phase-4-profile-enrichment)
+7. [Phase 5: DM Automation](#7-phase-5-dm-automation)
+8. [Risk Mitigation](#8-risk-mitigation)
+9. [Database Schema](#9-database-schema)
+10. [API Reference](#10-api-reference)
+11. [Cost Analysis](#11-cost-analysis)
+12. [Implementation & Testing Plan](#12-implementation--testing-plan)
 
 ---
 
@@ -136,7 +139,173 @@ This document outlines Agencity's LinkedIn automation system that enables:
 
 ---
 
-## 2. Phase 1: Credential Authentication
+## 2. Stealth & Anti-Detection System
+
+### Overview
+
+**Status**: ✅ **IMPLEMENTED & VERIFIED** (v3.3)
+
+LinkedIn employs sophisticated bot detection mechanisms. Our stealth system successfully bypasses these checks, allowing reliable session persistence and page access without authentication redirects.
+
+### Test Results
+
+All stealth tests passing as of February 19, 2026:
+
+| Test Phase | Result | Details |
+|------------|--------|---------|
+| **Ghost Cursor** | ✅ PASS | Natural Bezier curves, variable typing, mouse-wheel scroll |
+| **Stealth Evasion** | ✅ PASS | navigator.webdriver=false, chrome.runtime exists, plugins visible |
+| **Navigation Chain** | ✅ PASS | feed → mynetwork → connections (no login redirect) |
+| **Connection Page** | ✅ PASS | Page loads, displays connections, no auth challenge |
+
+### Components
+
+#### 1. StealthBrowser (`app/services/linkedin/stealth_browser.py`)
+
+Comprehensive browser automation framework with anti-detection built-in:
+
+**Features:**
+- **playwright-stealth** integration at context level
+- **Persistent browser profiles** (maintains session state across runs)
+- **Extra evasion scripts** injected automatically:
+  - WebGL fingerprint randomization
+  - Canvas fingerprint spoofing
+  - Audio context masking
+  - chrome.runtime injection
+  - Navigator plugins simulation
+  - Permissions API mocking
+  - Language/timezone consistency
+- **Dual launch modes**:
+  - `launch()` - Ephemeral browser for quick tasks
+  - `launch_persistent()` - Session-based profile for multi-step flows
+- **Residential proxy support** with location-based routing
+
+**Usage:**
+```python
+from app.services.linkedin.stealth_browser import StealthBrowser
+
+# Ephemeral mode (no profile saved)
+async with StealthBrowser.launch(headless=False) as sb:
+    page = await sb.new_page()
+    await page.goto('https://linkedin.com/feed')
+
+# Persistent mode (profile saved to ./browser_profiles/{session_id}/)
+async with StealthBrowser.launch_persistent(
+    session_id='user-123',
+    headless=False,
+    user_location='San Francisco, CA'
+) as sb:
+    page = await sb.new_page()
+    # Session state persists across runs
+```
+
+#### 2. GhostCursor (`app/services/linkedin/human_behavior.py`)
+
+Human behavior simulation using pyppeteer-ghost-cursor:
+
+**Features:**
+- **Bezier curve mouse movements** (no straight lines between elements)
+- **Natural typing rhythm**:
+  - Variable speed (50-80 WPM)
+  - Character-by-character with random delays
+  - Occasional typos and corrections
+  - Pauses between words
+- **Mouse-wheel scrolling** (discrete notches matching physical scroll wheel)
+- **Random delays** between all actions (300-1500ms)
+- **Realistic click patterns**:
+  - Slight overshoot (moves past target, then corrects)
+  - Small random offset from element center
+  - Natural click timing
+
+**Usage:**
+```python
+from app.services.linkedin.human_behavior import GhostCursor
+
+cursor = GhostCursor(page)
+
+# Type into field naturally
+await cursor.type_into('#email', 'user@example.com')
+
+# Move and click with Bezier curve
+await cursor.click_element('button[type="submit"]')
+
+# Scroll like a human (mouse wheel, not programmatic)
+await cursor.scroll(400)  # Scroll down 400px
+```
+
+#### 3. Enhanced Cookie Management
+
+Proper cookie handling prevents session invalidation:
+
+**Key Improvements:**
+- Correct domain configuration (`.www.linkedin.com` vs `.linkedin.com`)
+- Proper path settings for each cookie type
+- Secure/httpOnly flags matching LinkedIn's expectations
+- Session cookie expiration handling
+- Cookie list format conversion for Playwright context
+
+**Critical Cookies:**
+- `li_at` - Primary authentication token (httpOnly, secure)
+- `JSESSIONID` - Java session ID
+- `bcookie` - Browser cookie for tracking
+- `bscookie` - Secure browser cookie
+- `li_rm` - Remember me token
+
+### Anti-Detection Measures
+
+| Detection Vector | LinkedIn Check | Our Mitigation |
+|------------------|----------------|----------------|
+| **navigator.webdriver** | Checks if `navigator.webdriver === true` | playwright-stealth sets to `undefined` |
+| **window.chrome** | Checks if `window.chrome` exists | Inject chrome.runtime object |
+| **Plugins** | Checks `navigator.plugins.length` | Simulate realistic plugin list (3+) |
+| **Canvas fingerprint** | Generates canvas hash | Randomize canvas rendering |
+| **WebGL fingerprint** | Generates WebGL hash | Randomize WebGL parameters |
+| **Audio context** | Generates audio hash | Spoof audio context values |
+| **Hardware concurrency** | Checks core count | Report realistic value (4-8 cores) |
+| **Mouse movements** | Detects straight lines | Use Bezier curves via ghost cursor |
+| **Typing patterns** | Detects instant fills | Character-by-character with delays |
+| **Scroll behavior** | Detects instant scrolls | Use mouse-wheel events |
+
+### Testing Suite
+
+Comprehensive test coverage in `test_stealth_connections.py`:
+
+```bash
+# Test ghost cursor visual behavior
+python test_stealth_connections.py --phase cursor
+
+# Test stealth evasion (navigator.webdriver, chrome.runtime, etc.)
+python test_stealth_connections.py --phase stealth
+
+# Test navigation chain (feed → mynetwork → connections)
+export LINKEDIN_SESSION_ID="<uuid>"
+python test_stealth_connections.py --phase nav
+
+# Test full extraction flow
+python test_stealth_connections.py --phase extract
+
+# Run all tests
+python test_stealth_connections.py --phase all
+```
+
+### Results & Validation
+
+**Before Stealth Implementation:**
+- ❌ Session invalidated after 2-3 page loads
+- ❌ Redirected to login when accessing /mynetwork
+- ❌ Connections page inaccessible
+- ❌ Session cookies rejected within minutes
+
+**After Stealth Implementation:**
+- ✅ Session persists across multiple page loads
+- ✅ Feed, My Network, Connections all accessible
+- ✅ No authentication redirects
+- ✅ Connection page displays data correctly
+- ✅ All anti-detection checks passing
+
+---
+
+## 3. Phase 1: Credential Authentication
 
 ### Overview
 
