@@ -11,6 +11,14 @@
   - Cookie extraction
   - Playwright-stealth integration
   - Fixed timeout issues (changed networkidle → load)
+  - **Adaptive state-machine login flow** (handles all LinkedIn login variations)
+  - **Persistent browser profiles** (eliminates repeated sign-in emails)
+
+**Login States Handled**:
+- Welcome Back (remembered account selector)
+- Password-only form (email pre-filled)
+- Standard email/password form
+- 2FA challenges and security checkpoints
 
 **Test**: `python test_auth_only.py`
 
@@ -33,21 +41,24 @@
 
 **Test**: Session persists across runs, no sign-in emails after first login
 
-### 3. Connection Selectors Discovery
-- **Status**: Selectors identified
+### 3. Connection Extraction (DOM Selectors)
+- **Status**: ✅ Fully working
 - **Files**: `app/services/linkedin/connection_extractor.py`
-- **Findings**:
-  - LinkedIn uses obfuscated class names (`_6247f233`, etc.)
-  - Connection cards have `componentkey="auto-component-*"` attribute
-  - Structure: `div[componentkey^="auto-component"]` contains profile data
-  - Name: `a.de3d5865.ee709ba4` or first link in card
-  - Headline: `p[class*="fed20de1"]` or similar
-  - Profile URL: `a[href*="/in/"]`
+- **Selectors** (stable attributes, not obfuscated classes):
+  - `data-view-name="connections-list"` - Main container
+  - `data-view-name="connections-profile"` - Profile links
+  - `componentkey="auto-component-*"` - Card containers
 
-**Extractor Updated**:
-- Uses JavaScript-based DOM traversal
-- Finds cards by structure instead of CSS classes
-- Extracts data directly from HTML
+**Extraction Logic**:
+- Name: Nested `<p><a>` links or `aria-label` on figures
+- Headline: `<p>` elements (filtering UI text)
+- Connected date: "Connected on..." text parsing
+- Profile URL: `href` attributes
+
+**Testing**:
+- `test_extraction_offline.py` - Offline extraction against saved HTML
+- `test_extraction_new.py` - Live extraction test
+- `quick_dom_inspect.py` - DOM inspection utility
 
 ### 4. Browser Profiles
 - **Status**: Working
@@ -58,14 +69,38 @@
   - Mimics real browser usage
   - Reduces detection risk
 
-### 5. Testing Scripts
+### 5. Cookie Caching System
+- **Status**: ✅ Working
+- **Files**:
+  - `scripts/save_test_auth.py` - One-time auth + cookie save
+  - `conftest.py` - Pytest fixtures for cached cookies
+  - `.linkedin_test_cache.json` - Cached cookies (gitignored)
+- **Features**:
+  - Session-scoped pytest fixtures (`linkedin_cookies`, `linkedin_cookie_list`)
+  - Tests load from cache, skip login entirely
+  - Cache persists across test runs
+
+### 6. Adaptive Re-Authentication
+- **Status**: ✅ Working
+- **File**: `test_extraction_cached.py`
+- **Features**:
+  - Detects stale cookies during extraction
+  - Automatically handles re-authentication using state machine
+  - Updates cookie cache with fresh cookies
+  - Continues extraction without restart
+
+### 7. Testing Scripts
 Created comprehensive test suite:
-- `test_auth_only.py` - Test authentication + session storage
+- `test_auth_only.py` - Test authentication + session storage (loads cache when present)
 - `test_cookie_reuse.py` - Verify cookies work without re-login
+- `test_extraction_cached.py` - Extraction with cached cookies + adaptive re-auth
+- `test_extraction_offline.py` - Offline extraction against saved HTML
+- `test_extraction_new.py` - Live extraction test
+- `quick_dom_inspect.py` - DOM inspection utility
 - `debug_connections_page.py` - Debug page navigation
 - `screenshot_connections.py` - Capture page state
 - `find_connection_selectors.py` - Discover selectors
-- `test_extraction_updated.py` - Test full extraction flow
+- `scripts/save_test_auth.py` - Save cookies for testing
 
 ---
 
@@ -167,49 +202,44 @@ The Chrome extension approach you shared works better because:
 
 ---
 
-## 🎯 Current Issue: DOM Selectors
+## ✅ RESOLVED: DOM Selectors
 
-### Problem
-LinkedIn's connection page loads successfully, but the DOM selectors need updating:
+### Solution
+Updated `connection_extractor.py` to use stable DOM attributes instead of obfuscated CSS classes:
 
-**Observations from `extraction_test.png`:**
-- Page shows "1 connection" count
-- Connection card displays:
-  - Name: "Aidan Nguyen-Tran"
-  - Headline: "Building @ Agencity | Prev. Cluely | Data Science @ UCSD"
-  - Connected date: "Connected on February 19, 2026"
-  - Action buttons: "Message" button visible
+**Working Selectors:**
+- `data-view-name="connections-list"` - Main container
+- `data-view-name="connections-profile"` - Profile links
+- `componentkey="auto-component-*"` - Card containers
 
-**Current Challenge:**
-- Old selectors don't match current LinkedIn DOM structure
-- Need to identify correct selectors for:
-  - Connection card container
-  - Name element
-  - Headline/title element
-  - Profile URL
-  - Connection date
-  - Total connection count
+**Extraction Successfully Parses:**
+- Name from nested `<p><a>` links or `aria-label` on figures
+- Headline from `<p>` elements (filtering UI text)
+- Connected date from "Connected on..." text
+- Profile URL from `href` attributes
 
-### Next Steps
+**Verified Working:**
+- Offline extraction against saved HTML: ✅
+- Live extraction test: ✅
 
-1. **DOM Inspection** ✅ RESOLVED: Session invalidation fixed
-   - ~~Implement stealth browser~~ DONE
-   - ~~Add ghost cursor~~ DONE
-   - Run DOM inspector on live connections page
-   - Document current HTML structure
-   - Extract working selectors
+---
 
-2. **Update Connection Extractor**
-   - Replace old selectors with new ones
-   - Implement robust fallback selectors
-   - Add pagination/scrolling logic
-   - Test with ghost cursor for natural scrolling
+## 🎯 Next Steps
 
-3. **Integration Testing**
-   - Test full extraction flow end-to-end
-   - Verify all connection data fields extract correctly
-   - Measure extraction speed and success rate
-   - Monitor for any detection triggers
+1. **Pagination/Infinite Scroll**
+   - Implement scroll-to-load for large connection lists
+   - Use ghost cursor for natural scrolling behavior
+   - Track extraction progress across pages
+
+2. **Production Integration**
+   - Connect extraction to job queue system
+   - Store extracted connections in database
+   - Add rate limiting and monitoring
+
+3. **Error Handling**
+   - Handle network failures gracefully
+   - Retry logic for transient errors
+   - Alert system for persistent failures
 
 ### Option 2: Chrome Extension Approach
 Build a Chrome extension instead of Playwright automation:
@@ -274,14 +304,23 @@ User installs extension → Extension extracts connections → Sends to backend 
    No login redirects detected!
 ```
 
-### Connection Extraction: ⚠️ DOM Selectors Need Update
+### Connection Extraction: ✅ Working
 ```
-Status: success (navigation)
+Status: success
 ✅ Page loads: https://www.linkedin.com/mynetwork/invite-connect/connections/
 ✅ Shows "1 connection"
 ✅ Connection card visible
-❌ Old selectors don't match current DOM structure
-   Next: Update selectors and implement extraction logic
+✅ DOM selectors updated for new structure
+✅ Offline extraction verified
+✅ Live extraction working
+```
+
+### Adaptive Re-Auth: ✅ Working
+```
+✅ Detects stale cookies automatically
+✅ Handles Welcome Back, password-only, email/password forms
+✅ Updates cookie cache with fresh cookies
+✅ Continues extraction without restart
 ```
 
 ---
@@ -366,7 +405,151 @@ CREATE TABLE linkedin_sessions (
 2. **Secure Storage**: ✅ Using Supabase
 3. **Session Expiry**: ✅ 30 days
 4. **RLS Policies**: ✅ Enabled
-5. **Proxy Usage**: ⏸️ To be implemented
+5. **Proxy Usage**: ✅ Implemented (SmartProxy + BrightData, sticky sessions, geo-targeting)
+
+---
+
+## 💰 Unit Economics — Cost Per Operation
+
+### Proxy Provider Pricing
+
+| Provider | Pay-as-you-go | Starter | Growth | Enterprise |
+|---|---|---|---|---|
+| **SmartProxy** | ~$12/GB | $30/mo (2 GB = $15/GB) | $80/mo (8 GB = $10/GB) | ~$5–7/GB |
+| **BrightData** | ~$15/GB | $500/mo (~$10.50/GB) | Custom (~$8/GB) | ~$5/GB |
+
+> **Recommendation**: SmartProxy Growth plan ($10/GB) for early stage. Switch to enterprise at 50+ active users.
+
+---
+
+### Operation 1: Authentication (One-Time Per User)
+
+| Step | Pages Loaded | Est. Bandwidth |
+|---|---|---|
+| LinkedIn login page | 1 | ~1.5 MB |
+| Feed redirect + verification | 1–2 | ~2 MB |
+| Cookie extraction | 0 | 0 |
+| **Total** | **2–3 pages** | **~3.5 MB** |
+
+**Frequency**: Once per user (persistent profile), or once per 30 days (session expiry).
+
+| Metric | Value |
+|---|---|
+| Bandwidth per auth | ~0.0035 GB |
+| **Proxy cost @ $10/GB** | **$0.035** |
+| **Proxy cost @ $7/GB** | **$0.025** |
+
+---
+
+### Operation 2: Connection Extraction (Per User Onboarding)
+
+LinkedIn loads ~50 connections per scroll. The extraction follows a natural navigation chain (feed → mynetwork → connections) then scrolls to load all.
+
+| Connection Count | Pages | Scrolls | Nav Bandwidth | Scroll Bandwidth | **Total** |
+|---|---|---|---|---|---|
+| 100 | 3 | ~2 | ~6 MB | ~0.7 MB | **~7 MB** |
+| 500 | 3 | ~10 | ~6 MB | ~3.5 MB | **~10 MB** |
+| 1,000 | 3 | ~20 | ~6 MB | ~7 MB | **~13 MB** |
+| 3,000 | 3 | ~60 | ~6 MB | ~21 MB | **~27 MB** |
+| 5,000 | 3 | ~100 | ~6 MB | ~35 MB | **~41 MB** |
+
+| Avg User (500 conn.) | @ $10/GB | @ $7/GB |
+|---|---|---|
+| Bandwidth: ~0.01 GB | **$0.10** | **$0.07** |
+
+| Power User (3,000 conn.) | @ $10/GB | @ $7/GB |
+|---|---|---|
+| Bandwidth: ~0.027 GB | **$0.27** | **$0.19** |
+
+| Max User (5,000 conn.) | @ $10/GB | @ $7/GB |
+|---|---|---|
+| Bandwidth: ~0.041 GB | **$0.41** | **$0.29** |
+
+---
+
+### Operation 3: PDL Enrichment (Per Candidate)
+
+No proxy needed — pure API call.
+
+| Metric | Value |
+|---|---|
+| Cost per enrichment | **$0.10** |
+| Enrichments per role | Top 5 candidates |
+| Cache duration | 30 days |
+| **Cost per role (cold)** | **$0.50** |
+| **Cost per role (cached)** | **$0.00** |
+
+---
+
+### Operation 4: AI / LLM Costs (Per Role Curation)
+
+| Service | Per-Role Cost | Notes |
+|---|---|---|
+| Claude (reasoning) | ~$0.006 | Top 5 candidates |
+| GPT-4o (scoring) | ~$0.01 | Fit scoring |
+| Perplexity (research) | ~$0.025 | Disabled in cache gen |
+| **Total per role** | **~$0.04** | |
+
+---
+
+### 🧮 Full Cost Per User (Onboarding)
+
+**Scenario: Average user, 500 connections, 1 role**
+
+| Cost Item | Amount |
+|---|---|
+| Authentication (proxy) | $0.035 |
+| Connection extraction (proxy) | $0.10 |
+| PDL enrichment (top 5) | $0.50 |
+| AI/LLM curation | $0.04 |
+| **Total onboarding cost** | **$0.68** |
+
+**Scenario: Power user, 3,000 connections, 3 roles**
+
+| Cost Item | Amount |
+|---|---|
+| Authentication (proxy) | $0.035 |
+| Connection extraction (proxy) | $0.27 |
+| PDL enrichment (15 unique, ~10 cached) | $0.50 |
+| AI/LLM curation (×3) | $0.12 |
+| **Total onboarding cost** | **$0.93** |
+
+---
+
+### 📊 Monthly Recurring Costs (Per Active User)
+
+After onboarding, recurring costs are minimal:
+
+| Item | Monthly Cost | Trigger |
+|---|---|---|
+| Session refresh (re-auth) | $0.035 | Every 30 days |
+| Incremental extraction | ~$0.02 | New connections since last run |
+| New role curation | ~$0.54 | Per new role |
+| **Idle user (no new roles)** | **~$0.06/mo** | |
+| **Active user (2 roles/mo)** | **~$1.14/mo** | |
+
+---
+
+### 📈 Scaling Projections (Monthly)
+
+| Active Users | Proxy GB/mo | Proxy Cost | PDL Cost | AI Cost | **Total/mo** |
+|---|---|---|---|---|---|
+| 10 | ~0.15 GB | $1.50 | $5.00 | $0.40 | **$6.90** |
+| 50 | ~0.75 GB | $7.50 | $25.00 | $2.00 | **$34.50** |
+| 100 | ~1.5 GB | $15.00 | $50.00 | $4.00 | **$69.00** |
+| 500 | ~7.5 GB | $52.50* | $250.00 | $20.00 | **$322.50** |
+| 1,000 | ~15 GB | $90.00* | $500.00 | $40.00 | **$630.00** |
+
+*Enterprise pricing at $7/GB kicks in above ~25 GB/mo.
+
+---
+
+### 🎯 Key Takeaways
+
+1. **Proxy cost is negligible** — < $0.30/user for onboarding. The PDL enrichment ($0.10/call) is the dominant variable cost.
+2. **Sticky sessions save money** — Same IP reuse means no wasted auth retries. One auth = one login email = one proxy session.
+3. **30-day PDL cache is critical** — Without it, enrichment costs would be 3–5× higher for multi-role companies.
+4. **Break-even**: At $50/mo SaaS pricing, break-even is ~1 user per month. At scale (100 users), COGS is ~$0.69/user/mo = **98.6% gross margin**.
 
 ---
 
@@ -413,11 +596,18 @@ python test_cookie_reuse.py <session-id>
 
 1. `0ee93af` - fix: LinkedIn authentication and session storage
 2. `b233643` - feat: update LinkedIn connection extraction with new selectors
+3. `ef9aa58` - feat: implement stealth browser with ghost cursor for LinkedIn automation
+4. `348c311` - feat: integrate ghost cursor + stealth browser for LinkedIn automation
+5. `fc22f8a` - docs: update LinkedIn automation docs with stealth implementation
+6. `b0f28d5` - fix: update LinkedIn connection extraction for new DOM structure
+7. `52e55ee` - feat: persistent browser profiles + cookie cache to eliminate LinkedIn login emails
+8. `268d4a4` - feat: adaptive state-machine login flow for LinkedIn
+9. `2701863` - feat: add adaptive re-auth to extraction test
 
 ---
 
-**Last Updated**: February 19, 2026 (Post-Stealth Implementation)
+**Last Updated**: February 19, 2026
 
-**Status**: ✅ Authentication working | ✅ Session persistence working | ✅ Navigation working | ⚠️ DOM selectors need update
+**Status**: ✅ Authentication working | ✅ Session persistence working | ✅ Navigation working | ✅ DOM selectors working | ✅ Adaptive re-auth working | ✅ Proxy support working
 
-**Latest Commit**: `ef9aa58` - feat: implement stealth browser with ghost cursor for LinkedIn automation
+**Latest Commit**: `400c0a4` - feat: implement residential proxy support with sticky sessions + geo-targeting
