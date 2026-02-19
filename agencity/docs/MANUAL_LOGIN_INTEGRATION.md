@@ -46,7 +46,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any
 from playwright.async_api import async_playwright
-from playwright_stealth import Stealth
+from playwright_stealth import stealth_async
 
 
 class ManualLinkedInAuth:
@@ -84,7 +84,7 @@ class ManualLinkedInAuth:
             )
 
             page = await context.new_page()
-            await Stealth().apply_stealth_async(page)
+            await stealth_async(page)
 
             try:
                 # Check if already logged in
@@ -319,7 +319,7 @@ context = await p.chromium.launch_persistent_context(
 )
 
 # Apply stealth
-await Stealth().apply_stealth_async(page)
+await stealth_async(page)
 
 # Same manual login flow
 # But we also extract cookies for our system
@@ -352,8 +352,7 @@ Most users will prefer manual login because:
 
 ## Implementation Priority
 
-🟢 **High Priority** - Add manual login option
-- Lower detection risk
+11- Lower detection risk
 - Better user trust
 - Works with all 2FA methods
 - Simple to implement

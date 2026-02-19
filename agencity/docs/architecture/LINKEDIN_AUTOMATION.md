@@ -207,7 +207,7 @@ Users enter their LinkedIn credentials directly in Agencity. We use **Playwright
 import asyncio
 import random
 from playwright.async_api import async_playwright
-from playwright_stealth import Stealth
+from playwright_stealth import stealth_async
 from typing import Optional, Dict, Any
 from .encryption import CookieEncryption
 
@@ -254,7 +254,7 @@ class LinkedInCredentialAuth:
             page = await context.new_page()
 
             # Apply stealth
-            await Stealth().apply_stealth_async(page)
+            await stealth_async(page)
 
             try:
                 # Navigate to login
@@ -384,7 +384,7 @@ async def extract_connections(session_id: str) -> List[Connection]:
         )
 
         page = await browser.new_page()
-        await Stealth().apply_stealth_async(page)
+        await stealth_async(page)
 
         # 4. Navigate to connections page
         await page.goto('https://linkedin.com/mynetwork/invite-connect/connections/')
@@ -584,7 +584,7 @@ async def enrich_via_scraper_pool(linkedin_url: str) -> dict:
         )
 
         page = await browser.new_page()
-        await Stealth().apply_stealth_async(page)
+        await stealth_async(page)
 
         await page.goto(linkedin_url)
         await simulate_human_behavior(page)
@@ -1043,4 +1043,4 @@ This architecture provides a **simple, proven approach** using:
 **Resources**:
 - [playwright-stealth GitHub](https://github.com/AtuboDad/playwright_stealth)
 - [PhantomBuster LinkedIn Limits](https://phantombuster.com/blog/guides/linkedin-automation-rate-limits-2021-edition-5pFlkXZFjtku79DltwBF0M)
-- [Smartproxy Residential Proxies](https://smartproxy.com/)
+- [Smartproxy Residential Proxies](https://smartproxy.com/)l;

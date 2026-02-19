@@ -6,17 +6,19 @@ Handles:
 - 2FA code handling
 - Cookie extraction
 - Residential proxy usage
+
+Uses StealthBrowser for context-level stealth + extra evasion scripts.
 """
 
 import asyncio
 import random
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
-from playwright_stealth import Stealth
+from playwright.async_api import BrowserContext, Page
 
 from .encryption import CookieEncryption
-from .human_behavior import HumanBehaviorEngine
+from .human_behavior import HumanBehaviorEngine, GhostCursor
+from .stealth_browser import StealthBrowser
 
 
 class LinkedInCredentialAuth:
@@ -38,6 +40,10 @@ class LinkedInCredentialAuth:
         """
         Authenticate and extract cookies.
 
+        Uses StealthBrowser which wraps playwright-stealth at the context level
+        and injects extra evasion scripts (WebGL, canvas, audio fingerprint,
+        chrome.runtime, plugins, permissions, etc.) automatically.
+
         Args:
             email: LinkedIn email
             password: LinkedIn password
@@ -54,36 +60,18 @@ class LinkedInCredentialAuth:
             }
         """
         try:
-            # Get proxy if location provided
-            proxy = self._get_proxy_for_location(user_location) if user_location else None
-
-            async with async_playwright() as p:
-                # Launch browser (NOT headless - appears more legitimate)
-                browser = await p.chromium.launch(
-                    headless=False,
-                    proxy=proxy
-                )
-
-                # Create context with realistic settings
-                context = await browser.new_context(
-                    user_agent=self._get_realistic_user_agent(),
-                    viewport={'width': 1920, 'height': 1080},
-                    locale='en-US',
-                    timezone_id='America/Los_Angeles'
-                )
-
-                page = await context.new_page()
-
-                # Apply stealth to avoid detection
-                await Stealth().apply_stealth_async(page)
+            async with StealthBrowser.launch(
+                headless=False,
+                user_location=user_location,
+            ) as sb:
+                page = await sb.new_page()
 
                 try:
                     # If resuming 2FA flow
                     if resume_state and verification_code:
                         result = await self._resume_2fa_flow(
-                            context, page, resume_state, verification_code
+                            sb.context, page, resume_state, verification_code
                         )
-                        await browser.close()
                         return result
 
                     # Navigate to login page
@@ -93,18 +81,22 @@ class LinkedInCredentialAuth:
                         timeout=30000
                     )
 
-                    # Fill credentials with human-like delays
-                    await page.fill('input[name="session_key"]', email)
+                    # Fill credentials using ghost cursor (move → click → type)
+                    cursor = GhostCursor(page)
+
+                    # Move to email field, click, type
+                    await cursor.type_into('input[name="session_key"]', email)
                     await asyncio.sleep(random.uniform(0.3, 0.8))
 
-                    await page.fill('input[name="session_password"]', password)
+                    # Move to password field, click, type
+                    await cursor.type_into('input[name="session_password"]', password)
                     await asyncio.sleep(random.uniform(0.2, 0.5))
 
-                    # Click login button
-                    await page.click('button[type="submit"]')
+                    # Move to login button and click naturally
+                    await cursor.click_element('button[type="submit"]')
 
                     # Wait for navigation or 2FA
-                    # Use 'load' instead of 'networkidle' - LinkedIn has persistent connections
+                    # Use 'load' instead of 'networkidle' — LinkedIn has persistent connections
                     await page.wait_for_load_state('load', timeout=15000)
                     await asyncio.sleep(2)  # Additional wait for dynamic content
 
@@ -112,8 +104,7 @@ class LinkedInCredentialAuth:
                     if await self._is_2fa_required(page):
                         if not verification_code:
                             # Save browser state for resuming
-                            state = await self._serialize_browser_state(context)
-                            await browser.close()
+                            state = await self._serialize_browser_state(sb.context)
 
                             return {
                                 'status': '2fa_required',
@@ -124,7 +115,7 @@ class LinkedInCredentialAuth:
                             # Submit 2FA code
                             await self._submit_2fa_code(page, verification_code)
                             await page.wait_for_load_state('load', timeout=15000)
-                            await asyncio.sleep(2)  # Additional wait for dynamic content
+                            await asyncio.sleep(2)
 
                     # Check if login successful
                     if not await self._is_logged_in(page):
@@ -134,7 +125,7 @@ class LinkedInCredentialAuth:
                         }
 
                     # Extract cookies
-                    cookies = await context.cookies()
+                    cookies = await sb.context.cookies()
                     linkedin_cookies = self._extract_linkedin_cookies(cookies)
 
                     # Verify we have required cookies
@@ -155,8 +146,6 @@ class LinkedInCredentialAuth:
                         'status': 'error',
                         'error': f'Login failed: {str(e)}'
                     }
-                finally:
-                    await browser.close()
 
         except Exception as e:
             return {
@@ -229,7 +218,9 @@ class LinkedInCredentialAuth:
         return False
 
     async def _submit_2fa_code(self, page: Page, code: str) -> None:
-        """Submit 2FA verification code."""
+        """Submit 2FA verification code using ghost cursor."""
+        cursor = GhostCursor(page)
+
         # Try different input selectors
         selectors = [
             'input[name="pin"]',
@@ -241,10 +232,11 @@ class LinkedInCredentialAuth:
             try:
                 count = await page.locator(selector).count()
                 if count > 0:
-                    await page.fill(selector, code)
-                    await asyncio.sleep(0.5)
+                    # Move to 2FA input, click, type the code naturally
+                    await cursor.type_into(selector, code)
+                    await asyncio.sleep(random.uniform(0.3, 0.8))
 
-                    # Click submit button
+                    # Click submit button naturally
                     submit_selectors = [
                         'button[type="submit"]',
                         'button:has-text("Submit")',
@@ -255,7 +247,7 @@ class LinkedInCredentialAuth:
                         try:
                             submit_count = await page.locator(submit_selector).count()
                             if submit_count > 0:
-                                await page.click(submit_selector)
+                                await cursor.click_element(submit_selector)
                                 return
                         except:
                             continue
@@ -311,20 +303,3 @@ class LinkedInCredentialAuth:
             'cookies': cookies,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }
-
-    def _get_proxy_for_location(self, location: Optional[str]) -> Optional[Dict[str, str]]:
-        """Get residential proxy for user's location."""
-        # TODO: Implement actual proxy selection based on location
-        # For now, return None (no proxy)
-        # In production, integrate with Smartproxy or Bright Data
-        return None
-
-    def _get_realistic_user_agent(self) -> str:
-        """Get realistic user agent string."""
-        user_agents = [
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0'
-        ]
-        return random.choice(user_agents)
