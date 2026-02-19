@@ -12,6 +12,7 @@ This replaces per-page Stealth().apply_stealth_async(page) calls with a
 single context-level wrapper that covers every page automatically.
 """
 
+import logging
 import random
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -27,6 +28,8 @@ from playwright.async_api import (
 from playwright_stealth import Stealth
 
 from .proxy_manager import ProxyManager
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +331,7 @@ class StealthBrowser:
         headless: bool = False,
         proxy: Optional[Dict[str, str]] = None,
         user_location: Optional[str] = None,
+        sticky_session_id: Optional[str] = None,
     ):
         """
         Launch a stealth browser with a fresh (non-persistent) context.
@@ -335,14 +339,25 @@ class StealthBrowser:
         Args:
             headless: Run headless (False recommended for LinkedIn).
             proxy: Playwright proxy dict ``{server, username, password}``.
-            user_location: If set and no proxy given, auto-select a proxy.
+            user_location: If set and no proxy given, auto-select a proxy
+                           with geo-targeting to match the user's region.
+            sticky_session_id: If set, the proxy will always resolve to the
+                               same residential IP for this ID (sticky session).
 
         Yields:
             StealthBrowser instance.
         """
         # Resolve proxy from location if needed
         if not proxy and user_location:
-            proxy = ProxyManager().get_proxy_for_location(user_location)
+            proxy = ProxyManager().get_proxy_for_location(
+                location=user_location,
+                sticky_session_id=sticky_session_id,
+            )
+
+        if proxy:
+            logger.info("Launching browser with proxy: %s", proxy["server"])
+        else:
+            logger.debug("Launching browser without proxy (direct connection)")
 
         user_agent = random.choice(ALL_USER_AGENTS)
         viewport = random.choice(VIEWPORTS)
@@ -402,6 +417,10 @@ class StealthBrowser:
         runs — exactly like a real user's Chrome.  Each ``session_id`` gets
         its own profile directory.
 
+        The proxy is automatically configured with a sticky session keyed to
+        ``session_id`` so the same residential IP is used every time —
+        critical for maintaining LinkedIn's device trust.
+
         Args:
             session_id: Unique session / user identifier.
             headless: Run headless (False recommended for LinkedIn).
@@ -412,9 +431,17 @@ class StealthBrowser:
         Yields:
             StealthBrowser instance.
         """
-        # Resolve proxy from location if needed
+        # Resolve proxy from location if needed — always sticky for persistent
         if not proxy and user_location:
-            proxy = ProxyManager().get_proxy_for_location(user_location)
+            proxy = ProxyManager().get_proxy_for_location(
+                location=user_location,
+                sticky_session_id=session_id,  # same user → same IP every time
+            )
+
+        if proxy:
+            logger.info("Launching persistent browser (session=%s) with proxy: %s", session_id, proxy["server"])
+        else:
+            logger.debug("Launching persistent browser (session=%s) without proxy", session_id)
 
         user_agent = random.choice(ALL_USER_AGENTS)
         viewport = random.choice(VIEWPORTS)

@@ -15,6 +15,7 @@ from app.core.database import get_supabase_client
 from app.services.linkedin.session_manager import LinkedInSessionManager
 from app.services.linkedin.credential_auth import LinkedInCredentialAuth
 from app.services.linkedin.encryption import CookieEncryption
+from app.services.linkedin.proxy_manager import ProxyManager
 
 
 router = APIRouter(prefix="/api/v1/linkedin", tags=["linkedin"])
@@ -539,3 +540,38 @@ async def prioritize_connections(request: PrioritizeRequest):
         top_companies=['Placeholder - Phase 3'],
         avg_priority_score=50.0
     )
+
+
+# --- Proxy Health Check ---
+
+@router.get("/proxy/status")
+async def proxy_status(location: Optional[str] = None):
+    """
+    Check proxy configuration and connectivity.
+
+    Returns whether a proxy is configured, and if so, tests
+    connectivity and reports the exit IP and country.
+
+    Query params:
+        location (optional): User location to test geo-targeting
+    """
+    pm = ProxyManager()
+
+    if not pm.is_configured:
+        return {
+            "configured": False,
+            "provider": None,
+            "message": "No proxy configured. Set PROXY_PROVIDER, PROXY_USERNAME, "
+                       "PROXY_PASSWORD in your .env file."
+        }
+
+    proxy = pm.get_proxy_for_location(location=location, sticky_session_id="health_check")
+
+    health = await pm.check_proxy_health(proxy)
+
+    return {
+        "configured": True,
+        "provider": pm.provider,
+        "target_location": location or "default (us)",
+        "health": health,
+    }

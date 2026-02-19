@@ -87,8 +87,19 @@ class Settings(BaseSettings):
     unipile_api_key: str = ""
     unipile_base_url: str = "https://api.unipile.com/api/v1"
 
-    # Residential Proxy (for scraper pool)
-    proxy_provider: str = ""  # smartproxy, brightdata, etc.
+    # Residential Proxy (for LinkedIn automation)
+    # Required for production. Without a proxy, your server's IP is exposed.
+    #
+    # SmartProxy:  proxy_provider="smartproxy"
+    #              proxy_username="your-dashboard-username"
+    #              proxy_password="your-dashboard-password"
+    #
+    # BrightData:  proxy_provider="brightdata"
+    #              proxy_username="c_customer123-zone-residential"
+    #              proxy_password="your-password"
+    #
+    # Leave all blank to connect directly (no proxy).
+    proxy_provider: str = ""  # "smartproxy" or "brightdata"
     proxy_username: str = ""
     proxy_password: str = ""
 
