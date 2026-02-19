@@ -373,12 +373,14 @@ class LinkedInConnectionExtractor:
         """
         Wait for LinkedIn to render connection cards.
         LinkedIn uses React and lazy loading, so we need to wait and potentially scroll.
+
+        Uses stable data-view-name and componentkey attributes (Feb 2026 structure).
         """
+        # Priority order: most specific to broadest
         possible_selectors = [
-            'li.mn-connection-card',
-            'li[class*="reusable-search__result"]',
-            'div.scaffold-finite-scroll__content li',
-            'ul[class*="list"] > li[class*="list-item"]',
+            '[data-view-name="connections-list"]',  # Main list container
+            '[data-view-name="connections-profile"]',  # Individual profile links
+            '[componentkey^="auto-component-"]',  # Card containers
             'a[href*="/in/"]',  # Broad fallback — any profile link on page
         ]
 
@@ -387,6 +389,7 @@ class LinkedInConnectionExtractor:
                 try:
                     count = await page.locator(selector).count()
                     if count > 0:
+                        logger.debug(f"Found {count} elements matching '{selector}'")
                         await asyncio.sleep(2)
                         return
                 except Exception:
@@ -394,6 +397,7 @@ class LinkedInConnectionExtractor:
 
             await asyncio.sleep(1)
             if attempt == 3:
+                # Try scrolling to trigger lazy loading
                 cursor = GhostCursor(page)
                 await cursor.scroll(500)
                 await asyncio.sleep(0.5)
@@ -402,47 +406,184 @@ class LinkedInConnectionExtractor:
         """
         Extract connection data from currently visible connection cards.
 
-        Uses JavaScript DOM traversal to find cards reliably despite
-        LinkedIn's obfuscated / dynamic class names.
+        Uses LinkedIn's stable data-view-name attributes and componentkey
+        attributes to find cards reliably despite obfuscated class names.
+
+        LinkedIn DOM structure (Feb 2026):
+        - List container: [data-view-name="connections-list"]
+        - Card container: [componentkey^="auto-component-"]
+        - Profile links: [data-view-name="connections-profile"]
+        - Name: innermost <a> or <p> with profile link text
+        - Headline: <p> element with job description text
+        - Connected date: <p> with "Connected on" text
         """
-        cards_data = await page.evaluate('''() => {
-            const profileLinks = document.querySelectorAll('a[href*="/in/"]');
-            const cards = [];
+        cards_data = await page.evaluate(r'''() => {
+            const connections = [];
             const seenUrls = new Set();
 
-            profileLinks.forEach(link => {
-                let container = link.closest('[componentkey^="auto-component"]');
+            // Find the connections list container
+            const listContainer = document.querySelector('[data-view-name="connections-list"]');
+            if (!listContainer) {
+                // Fallback: search entire document
+                console.warn('connections-list container not found, searching document');
+            }
 
-                if (container) {
-                    const profileLink = container.querySelector('a[href*="/in/"]');
-                    const url = profileLink ? profileLink.href : null;
+            const searchRoot = listContainer || document;
 
-                    if (!url || seenUrls.has(url)) return;
-                    seenUrls.add(url);
+            // Find all connection cards by componentkey (stable attribute)
+            const cards = searchRoot.querySelectorAll('[componentkey^="auto-component-"]');
 
-                    // Name — try several selector patterns
-                    const nameLink = container.querySelector(
-                        'a.de3d5865.ee709ba4, a[href*="/in/"] span, a[href*="/in/"]'
-                    );
-                    const name = nameLink ? nameLink.textContent.trim() : null;
+            cards.forEach(card => {
+                // Find profile link within this card
+                const profileLinks = card.querySelectorAll('a[href*="/in/"]');
+                if (profileLinks.length === 0) return;
 
-                    // Headline
-                    const headlineEl = container.querySelector(
-                        'p[class*="fed20de1"], div.bab11c20 p, span.mn-connection-card__occupation'
-                    );
-                    const headline = headlineEl ? headlineEl.textContent.trim() : null;
+                // Get the profile URL from the first link
+                const profileLink = profileLinks[0];
+                const url = profileLink.href?.split('?')[0];
+                if (!url || seenUrls.has(url)) return;
+                seenUrls.add(url);
 
-                    // Profile image
-                    const img = container.querySelector('img[alt*="profile picture"], img[alt*="photo"]');
-                    const imgUrl = img ? img.src : null;
-
-                    if (name && url) {
-                        cards.push({ name, headline, url, imgUrl });
+                // Extract name - look for the innermost text in a profile link
+                let name = null;
+                for (const link of profileLinks) {
+                    // Check for nested <a> with just the name
+                    const innerA = link.querySelector('a');
+                    if (innerA && innerA.textContent?.trim()) {
+                        name = innerA.textContent.trim();
+                        break;
+                    }
+                    // Check for <p> containing <a> with name
+                    const pWithA = link.querySelector('p a');
+                    if (pWithA && pWithA.textContent?.trim()) {
+                        name = pWithA.textContent.trim();
+                        break;
+                    }
+                    // Fallback: use link text if it looks like a name
+                    const linkText = link.textContent?.trim();
+                    if (linkText && linkText.length > 2 && linkText.length < 60 && !linkText.includes('@')) {
+                        // Skip if it contains headline indicators
+                        if (!linkText.includes(' | ') && !linkText.includes(' at ')) {
+                            name = linkText;
+                            break;
+                        }
                     }
                 }
+
+                // Extract headline - find <p> elements with job description
+                let headline = null;
+                let connectedDate = null;
+                const paragraphs = card.querySelectorAll('p');
+                for (const p of paragraphs) {
+                    const text = p.textContent?.trim();
+                    if (!text || text.length < 5) continue;
+
+                    // Skip if it's the name
+                    if (text === name) continue;
+
+                    // Check for connected date
+                    if (text.startsWith('Connected on') || text.startsWith('Connected ')) {
+                        connectedDate = text;
+                        continue;
+                    }
+
+                    // Skip UI elements
+                    if (/^(Message|Connect|Follow|Pending|Send|InMail)$/i.test(text)) continue;
+
+                    // This is likely the headline (job title / company)
+                    if (!headline && text.length >= 10 && text.length <= 200) {
+                        headline = text;
+                    }
+                }
+
+                // If no name found from links, try to extract from aria-label
+                if (!name) {
+                    const figure = card.querySelector('figure[aria-label]');
+                    if (figure) {
+                        const ariaLabel = figure.getAttribute('aria-label');
+                        if (ariaLabel && ariaLabel.includes("'s profile picture")) {
+                            name = ariaLabel.replace("'s profile picture", "").trim();
+                        }
+                    }
+                }
+
+                // Skip if we couldn't find a name
+                if (!name || name.length < 2) return;
+
+                // Extract profile image
+                const img = card.querySelector('img[src*="licdn"], img[src*="profile"]');
+                const imgUrl = img?.src || null;
+
+                connections.push({
+                    name,
+                    headline,
+                    url,
+                    imgUrl,
+                    connectedDate
+                });
             });
 
-            return cards;
+            // Fallback: if no cards found via componentkey, try profile links directly
+            if (connections.length === 0) {
+                const profileLinks = searchRoot.querySelectorAll('[data-view-name="connections-profile"]');
+                const processedUrls = new Set();
+
+                profileLinks.forEach(link => {
+                    const url = link.href?.split('?')[0];
+                    if (!url || processedUrls.has(url)) return;
+                    processedUrls.add(url);
+
+                    // Walk up to find the containing card
+                    let card = link.parentElement;
+                    for (let i = 0; i < 8 && card; i++) {
+                        if (card.hasAttribute('componentkey')) break;
+                        card = card.parentElement;
+                    }
+
+                    if (!card) return;
+
+                    // Extract data similar to above
+                    let name = null;
+                    const nameLink = card.querySelector('a[href*="/in/"] p a, p a[href*="/in/"]');
+                    if (nameLink) {
+                        name = nameLink.textContent?.trim();
+                    } else {
+                        // Try aria-label
+                        const figure = card.querySelector('figure[aria-label]');
+                        if (figure) {
+                            const ariaLabel = figure.getAttribute('aria-label');
+                            if (ariaLabel?.includes("'s profile picture")) {
+                                name = ariaLabel.replace("'s profile picture", "").trim();
+                            }
+                        }
+                    }
+
+                    if (!name) return;
+
+                    let headline = null;
+                    const paragraphs = card.querySelectorAll('p');
+                    for (const p of paragraphs) {
+                        const text = p.textContent?.trim();
+                        if (!text || text === name || text.length < 10) continue;
+                        if (text.startsWith('Connected')) continue;
+                        if (/^(Message|Connect|Follow)$/i.test(text)) continue;
+                        headline = text;
+                        break;
+                    }
+
+                    const img = card.querySelector('img[src*="licdn"]');
+
+                    connections.push({
+                        name,
+                        headline,
+                        url,
+                        imgUrl: img?.src || null,
+                        connectedDate: null
+                    });
+                });
+            }
+
+            return connections;
         }''')
 
         connections = []
