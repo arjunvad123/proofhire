@@ -33,6 +33,7 @@ class LinkedInCredentialAuth:
         self,
         email: str,
         password: str,
+        user_id: Optional[str] = None,
         user_location: Optional[str] = None,
         verification_code: Optional[str] = None,
         resume_state: Optional[Dict[str, Any]] = None
@@ -47,6 +48,10 @@ class LinkedInCredentialAuth:
         Args:
             email: LinkedIn email
             password: LinkedIn password
+            user_id: If provided, uses a persistent browser profile keyed to this
+                     user so LinkedIn recognises the same "device" across logins.
+                     Only the first login triggers a sign-in notification email;
+                     subsequent logins from the same profile are silent.
             user_location: User's location for proxy selection
             verification_code: 2FA code if required
             resume_state: Browser state to resume 2FA flow
@@ -60,10 +65,22 @@ class LinkedInCredentialAuth:
             }
         """
         try:
-            async with StealthBrowser.launch(
-                headless=False,
-                user_location=user_location,
-            ) as sb:
+            # Use a persistent browser profile when a user_id is supplied so
+            # LinkedIn binds trust to a stable "device".  Without this, every
+            # launch gets a fresh fingerprint and triggers a sign-in email.
+            if user_id:
+                browser_ctx = StealthBrowser.launch_persistent(
+                    session_id=f"auth_{user_id}",
+                    headless=False,
+                    user_location=user_location,
+                )
+            else:
+                browser_ctx = StealthBrowser.launch(
+                    headless=False,
+                    user_location=user_location,
+                )
+
+            async with browser_ctx as sb:
                 page = await sb.new_page()
 
                 try:

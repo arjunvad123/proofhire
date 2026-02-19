@@ -180,10 +180,12 @@ async def connect_linkedin_credentials(
         # Initialize credential auth
         auth = LinkedInCredentialAuth()
 
-        # Attempt login
+        # Attempt login — pass user_id so a persistent browser profile is used,
+        # meaning LinkedIn only sends a sign-in email on the very first connect.
         result = await auth.login(
             email=request.email,
             password=request.password,
+            user_id=request.user_id,
             user_location=request.user_location
         )
 
@@ -244,10 +246,12 @@ async def submit_2fa_code(
         # Initialize credential auth
         auth = LinkedInCredentialAuth()
 
-        # Resume login with 2FA code
+        # Resume login with 2FA code — pass user_id to reuse the same persistent
+        # browser profile that was used in /connect-credentials.
         result = await auth.login(
             email='',  # Not needed for resume
             password='',  # Not needed for resume
+            user_id=request.user_id,
             verification_code=request.verification_code,
             resume_state=request.verification_state
         )

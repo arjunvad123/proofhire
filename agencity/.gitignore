@@ -60,12 +60,16 @@ temp/
 # Browser profiles (persistent session storage)
 browser_profiles/
 
+# LinkedIn test cookie cache (contains secrets)
+.linkedin_test_cache.json
+
 # Test screenshots and debug files
 *.png
 *.html
 *_test.py
 diagnose_*.py
 save_*.py
+!scripts/save_test_auth.py
 extract_*.py
 find_*.py
 get_*.py
