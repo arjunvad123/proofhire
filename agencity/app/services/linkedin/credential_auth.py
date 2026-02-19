@@ -3,22 +3,43 @@ LinkedIn credential authentication service.
 
 Handles:
 - Direct login with email/password
+- "Welcome Back" remembered account flow
 - 2FA code handling
 - Cookie extraction
 - Residential proxy usage
+
+Uses an adaptive state-machine approach to handle LinkedIn's varying login flows:
+1. Detect current page state (login form, welcome back, 2FA, logged in, etc.)
+2. Take appropriate action based on state
+3. Repeat until logged in or error
 
 Uses StealthBrowser for context-level stealth + extra evasion scripts.
 """
 
 import asyncio
 import random
+import logging
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from playwright.async_api import BrowserContext, Page
 
 from .encryption import CookieEncryption
 from .human_behavior import HumanBehaviorEngine, GhostCursor
 from .stealth_browser import StealthBrowser
+
+logger = logging.getLogger(__name__)
+
+
+class LoginState:
+    """Possible states during LinkedIn login flow."""
+    UNKNOWN = "unknown"
+    LOGIN_FORM = "login_form"           # Standard email/password form
+    WELCOME_BACK = "welcome_back"        # Remembered account selector
+    PASSWORD_ONLY = "password_only"      # Only password needed (email remembered)
+    TWO_FA = "2fa"                       # 2FA verification required
+    CHECKPOINT = "checkpoint"            # Security checkpoint
+    LOGGED_IN = "logged_in"              # Successfully logged in
+    ERROR = "error"                      # Login error/captcha
 
 
 class LinkedInCredentialAuth:
@@ -39,19 +60,23 @@ class LinkedInCredentialAuth:
         resume_state: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Authenticate and extract cookies.
+        Authenticate and extract cookies using adaptive state-machine approach.
 
-        Uses StealthBrowser which wraps playwright-stealth at the context level
-        and injects extra evasion scripts (WebGL, canvas, audio fingerprint,
-        chrome.runtime, plugins, permissions, etc.) automatically.
+        LinkedIn's login flow varies - sometimes showing:
+        - Standard email/password form
+        - "Welcome Back" remembered account selector
+        - Password-only form (email pre-filled)
+        - 2FA challenges
+        - Security checkpoints
+
+        This method detects the current state and takes appropriate action,
+        looping until logged in or an error occurs.
 
         Args:
             email: LinkedIn email
             password: LinkedIn password
             user_id: If provided, uses a persistent browser profile keyed to this
                      user so LinkedIn recognises the same "device" across logins.
-                     Only the first login triggers a sign-in notification email;
-                     subsequent logins from the same profile are silent.
             user_location: User's location for proxy selection
             verification_code: 2FA code if required
             resume_state: Browser state to resume 2FA flow
@@ -65,9 +90,7 @@ class LinkedInCredentialAuth:
             }
         """
         try:
-            # Use a persistent browser profile when a user_id is supplied so
-            # LinkedIn binds trust to a stable "device".  Without this, every
-            # launch gets a fresh fingerprint and triggers a sign-in email.
+            # Use a persistent browser profile when a user_id is supplied
             if user_id:
                 browser_ctx = StealthBrowser.launch_persistent(
                     session_id=f"auth_{user_id}",
@@ -86,89 +109,293 @@ class LinkedInCredentialAuth:
                 try:
                     # If resuming 2FA flow
                     if resume_state and verification_code:
-                        result = await self._resume_2fa_flow(
+                        return await self._resume_2fa_flow(
                             sb.context, page, resume_state, verification_code
                         )
-                        return result
 
                     # Navigate to login page
                     await page.goto(
                         'https://www.linkedin.com/login',
-                        wait_until='networkidle',
+                        wait_until='load',
                         timeout=30000
                     )
+                    await asyncio.sleep(2)
 
-                    # Fill credentials using ghost cursor (move → click → type)
-                    cursor = GhostCursor(page)
+                    # State machine loop - handle whatever LinkedIn throws at us
+                    max_iterations = 10  # Prevent infinite loops
+                    for iteration in range(max_iterations):
+                        state = await self._detect_login_state(page, email)
+                        logger.info(f"Login iteration {iteration + 1}: state={state}")
 
-                    # Move to email field, click, type
-                    await cursor.type_into('input[name="session_key"]', email)
-                    await asyncio.sleep(random.uniform(0.3, 0.8))
+                        if state == LoginState.LOGGED_IN:
+                            # Success! Extract cookies
+                            cookies = await sb.context.cookies()
+                            linkedin_cookies = self._extract_linkedin_cookies(cookies)
+                            if linkedin_cookies.get('li_at'):
+                                return {
+                                    'status': 'connected',
+                                    'cookies': linkedin_cookies,
+                                    'message': 'Successfully authenticated with LinkedIn'
+                                }
+                            else:
+                                return {
+                                    'status': 'error',
+                                    'error': 'Logged in but failed to extract cookies'
+                                }
 
-                    # Move to password field, click, type
-                    await cursor.type_into('input[name="session_password"]', password)
-                    await asyncio.sleep(random.uniform(0.2, 0.5))
+                        elif state == LoginState.TWO_FA:
+                            if verification_code:
+                                await self._submit_2fa_code(page, verification_code)
+                                await page.wait_for_load_state('load', timeout=15000)
+                                await asyncio.sleep(2)
+                                continue  # Check state again
+                            else:
+                                # Need to ask user for 2FA code
+                                browser_state = await self._serialize_browser_state(sb.context)
+                                return {
+                                    'status': '2fa_required',
+                                    'verification_state': browser_state,
+                                    'message': 'Please enter the verification code sent to your device'
+                                }
 
-                    # Move to login button and click naturally
-                    await cursor.click_element('button[type="submit"]')
+                        elif state == LoginState.WELCOME_BACK:
+                            clicked = await self._handle_welcome_back(page, email)
+                            if clicked:
+                                await page.wait_for_load_state('load', timeout=15000)
+                                await asyncio.sleep(2)
+                                continue  # Check state again
+                            else:
+                                # Couldn't click account, try "Sign in using another account"
+                                await self._click_sign_in_another_account(page)
+                                await asyncio.sleep(2)
+                                continue
 
-                    # Wait for navigation or 2FA
-                    # Use 'load' instead of 'networkidle' — LinkedIn has persistent connections
-                    await page.wait_for_load_state('load', timeout=15000)
-                    await asyncio.sleep(2)  # Additional wait for dynamic content
-
-                    # Check for 2FA challenge
-                    if await self._is_2fa_required(page):
-                        if not verification_code:
-                            # Save browser state for resuming
-                            state = await self._serialize_browser_state(sb.context)
-
-                            return {
-                                'status': '2fa_required',
-                                'verification_state': state,
-                                'message': 'Please enter the verification code sent to your device'
-                            }
-                        else:
-                            # Submit 2FA code
-                            await self._submit_2fa_code(page, verification_code)
+                        elif state == LoginState.LOGIN_FORM:
+                            await self._fill_login_form(page, email, password)
                             await page.wait_for_load_state('load', timeout=15000)
                             await asyncio.sleep(2)
+                            continue  # Check state again
 
-                    # Check if login successful
-                    if not await self._is_logged_in(page):
-                        return {
-                            'status': 'error',
-                            'error': 'Invalid credentials or login failed. Please check your email and password.'
-                        }
+                        elif state == LoginState.PASSWORD_ONLY:
+                            await self._fill_password_only(page, password)
+                            await page.wait_for_load_state('load', timeout=15000)
+                            await asyncio.sleep(2)
+                            continue  # Check state again
 
-                    # Extract cookies
-                    cookies = await sb.context.cookies()
-                    linkedin_cookies = self._extract_linkedin_cookies(cookies)
+                        elif state == LoginState.CHECKPOINT:
+                            # Security checkpoint - might need manual intervention
+                            return {
+                                'status': 'error',
+                                'error': 'Security checkpoint detected. Please log in manually.'
+                            }
 
-                    # Verify we have required cookies
-                    if not linkedin_cookies.get('li_at'):
-                        return {
-                            'status': 'error',
-                            'error': 'Failed to extract authentication cookies'
-                        }
+                        elif state == LoginState.ERROR:
+                            return {
+                                'status': 'error',
+                                'error': 'Login error detected. Invalid credentials or account locked.'
+                            }
 
+                        else:
+                            # Unknown state - wait and try again
+                            await asyncio.sleep(2)
+                            continue
+
+                    # Max iterations reached
                     return {
-                        'status': 'connected',
-                        'cookies': linkedin_cookies,
-                        'message': 'Successfully authenticated with LinkedIn'
+                        'status': 'error',
+                        'error': 'Login flow did not complete. Please try again.'
                     }
 
                 except Exception as e:
+                    logger.exception("Login failed")
                     return {
                         'status': 'error',
                         'error': f'Login failed: {str(e)}'
                     }
 
         except Exception as e:
+            logger.exception("Browser error")
             return {
                 'status': 'error',
                 'error': f'Browser error: {str(e)}'
             }
+
+    async def _detect_login_state(self, page: Page, email: str) -> str:
+        """
+        Detect the current state of the login flow.
+
+        Returns one of the LoginState constants.
+        """
+        url = page.url
+
+        # Check if already logged in
+        if await self._is_logged_in(page):
+            return LoginState.LOGGED_IN
+
+        # Check URL-based states
+        if '/checkpoint' in url:
+            if await self._is_2fa_required(page):
+                return LoginState.TWO_FA
+            return LoginState.CHECKPOINT
+
+        # Check for 2FA (can appear on various URLs)
+        if await self._is_2fa_required(page):
+            return LoginState.TWO_FA
+
+        # Check for login error messages
+        error_selectors = [
+            'text="Wrong email or password"',
+            'text="Please enter a valid email"',
+            'text="Incorrect password"',
+            'text="account has been restricted"',
+            '[data-error="true"]',
+        ]
+        for selector in error_selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    return LoginState.ERROR
+            except:
+                pass
+
+        # Check for "Welcome Back" account selector
+        try:
+            welcome_back = await page.locator('text="Welcome Back"').count()
+            has_account_card = await page.locator('text=/[a-z]\\*+@/i').count()  # Masked email
+            if welcome_back > 0 or has_account_card > 0:
+                return LoginState.WELCOME_BACK
+        except:
+            pass
+
+        # Check for standard login form
+        try:
+            email_input = await page.locator('input[name="session_key"]').count()
+            password_input = await page.locator('input[name="session_password"]').count()
+            if email_input > 0 and password_input > 0:
+                return LoginState.LOGIN_FORM
+        except:
+            pass
+
+        # Check for password-only form (email pre-filled or remembered)
+        try:
+            password_only = await page.locator('input[type="password"]').count()
+            no_email = await page.locator('input[name="session_key"]').count() == 0
+            if password_only > 0 and no_email:
+                return LoginState.PASSWORD_ONLY
+        except:
+            pass
+
+        return LoginState.UNKNOWN
+
+    async def _handle_welcome_back(self, page: Page, email: str) -> bool:
+        """
+        Handle the 'Welcome Back' account selector screen.
+
+        Clicks on the remembered account card.
+        Returns True if clicked successfully.
+        """
+        cursor = GhostCursor(page)
+
+        try:
+            # Try to find the account card with masked email
+            # LinkedIn shows emails like "a*****@ucsd.edu"
+            masked_email_locator = page.locator('text=/[a-z]\\*+@/i')
+            if await masked_email_locator.count() > 0:
+                # Click the parent container (the card)
+                card = masked_email_locator.first.locator('xpath=ancestor::div[contains(@class, "card") or @role="button" or contains(@class, "account")]').first
+                try:
+                    await card.click()
+                    return True
+                except:
+                    # Fallback: click directly on the masked email text
+                    await masked_email_locator.first.click()
+                    return True
+        except Exception as e:
+            logger.debug(f"Could not click masked email: {e}")
+
+        # Try other selectors for the account card
+        selectors = [
+            'div[role="button"]:has-text("@")',
+            'button:has-text("@")',
+            'a:has-text("@")',
+        ]
+
+        for selector in selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    await cursor.click_element(selector)
+                    return True
+            except:
+                continue
+
+        return False
+
+    async def _click_sign_in_another_account(self, page: Page) -> bool:
+        """Click 'Sign in using another account' link."""
+        selectors = [
+            'text="Sign in using another account"',
+            'text="Use another account"',
+            'a:has-text("another account")',
+        ]
+
+        for selector in selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    await page.locator(selector).click()
+                    return True
+            except:
+                continue
+
+        return False
+
+    async def _fill_login_form(self, page: Page, email: str, password: str) -> None:
+        """Fill the standard email/password login form."""
+        cursor = GhostCursor(page)
+
+        # Clear and fill email
+        await cursor.type_into('input[name="session_key"]', email)
+        await asyncio.sleep(random.uniform(0.3, 0.8))
+
+        # Clear and fill password
+        await cursor.type_into('input[name="session_password"]', password)
+        await asyncio.sleep(random.uniform(0.2, 0.5))
+
+        # Click submit
+        await cursor.click_element('button[type="submit"]')
+
+    async def _fill_password_only(self, page: Page, password: str) -> None:
+        """Fill password when email is already pre-filled."""
+        cursor = GhostCursor(page)
+
+        # Find and fill password field
+        password_selectors = [
+            'input[name="session_password"]',
+            'input[type="password"]',
+            'input[id*="password"]',
+        ]
+
+        for selector in password_selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    await cursor.type_into(selector, password)
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
+                    break
+            except:
+                continue
+
+        # Click submit
+        submit_selectors = [
+            'button[type="submit"]',
+            'button:has-text("Sign in")',
+            'button:has-text("Continue")',
+        ]
+
+        for selector in submit_selectors:
+            try:
+                if await page.locator(selector).count() > 0:
+                    await cursor.click_element(selector)
+                    return
+            except:
+                continue
 
     async def _resume_2fa_flow(
         self,
