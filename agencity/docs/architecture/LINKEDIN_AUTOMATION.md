@@ -2,7 +2,7 @@
 
 ## Technical Architecture for Network Intelligence & Outreach
 
-**Version 3.4** | February 2026 | Status: Multi-Account Architecture + Hardened Behavior
+**Version 3.5** | February 2026 | Status: Profile Warming System + Production Ready
 
 ---
 
@@ -18,11 +18,12 @@ This document outlines Agencity's LinkedIn automation system that enables:
 
 **Architecture Philosophy**: Use **Playwright + playwright-stealth** with persistent browser profiles, **ghost cursor** for human behavior simulation, and comprehensive anti-detection measures. Conservative rate limits and warning detection minimize risk of account restrictions.
 
-**Latest Update (v3.4)**:
+**Latest Update (v3.5)**:
+- ✅ **Profile Warming System** - CLI + API for one-time CAPTCHA completion
 - ✅ Multi-account isolation via `AccountManager` (email-hashed browser profiles)
 - ✅ Hardened scrolling with idle patterns, warmup mode, momentum scrolling
 - ✅ Configurable extraction modes (CAUTIOUS vs NORMAL)
-- ⚠️ Known issue: First-time CAPTCHA on new browser profiles (see [Known Issues](#known-issues))
+- ✅ First-time CAPTCHA handled via warming flow (see [Profile Warming](#profile-warming))
 
 ---
 
@@ -1125,42 +1126,53 @@ async def handle_warning(session_id: str):
 
 **Problem**: When a browser profile is new (or cleared), LinkedIn shows a CAPTCHA ("I'm not a robot") during login. This happens regardless of stealth measures because LinkedIn requires device trust verification.
 
-**Why It Happens**:
-- New browser profile = new device fingerprint
-- LinkedIn security requires human verification for new devices
-- This is standard behavior for ALL users, not just automation
+**Status**: ✅ **RESOLVED in v3.5** via Profile Warming System
 
-**Solution - Production UX Flow**:
+**Solution - Profile Warming System**:
+
+The warming system provides a production-ready flow for handling first-time verification:
 
 ```
-First Time Connection (per account):
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. User enters LinkedIn credentials in your app              │
-│ 2. Backend opens browser with isolated profile               │
-│ 3. LinkedIn may show CAPTCHA/email verification              │
-│ 4. User completes verification in browser window (one time)  │
-│ 5. Cookies saved to warmed profile                           │
-│ 6. Profile is now trusted                                    │
+│ WARMING FLOW (One-time per account)                          │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Web app creates session in DB (warming_status='pending')  │
+│ 2. User runs CLI: python scripts/save_test_auth.py \         │
+│       --email="user@example.com" \                           │
+│       --session-id="abc123"                                  │
+│ 3. Browser opens, user completes CAPTCHA/verification        │
+│ 4. CLI saves cookies to Supabase via API                     │
+│ 5. Session updated: warming_status='warmed', status='active' │
+│ 6. Web app polls for warming_status and shows success        │
 └──────────────────────────────────────────────────────────────┘
 
 All Future Sessions:
 ┌──────────────────────────────────────────────────────────────┐
-│ 1. Load cookies from warmed profile                          │
+│ 1. Load cookies from warmed session                          │
 │ 2. No CAPTCHA, no login needed                               │
 │ 3. Direct access to LinkedIn                                 │
 │ 4. Run extraction, DMs, etc.                                 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Key Principle**: **Never delete warmed browser profiles**. The account isolation system keeps each account's profile separate - preserve them.
-
-**Code Handling**:
-```python
-# credential_auth.py now waits up to 5 minutes for checkpoint completion
-elif state == LoginState.CHECKPOINT:
-    # Wait for user to complete verification in browser
-    # Auto-detects when logged in and continues
+**API Endpoint**:
+```bash
+POST /api/v1/linkedin/session/{session_id}/warm
+{
+  "cookies": { "li_at": {...}, "JSESSIONID": {...} },
+  "profile_id": "520a247abacf0f04"
+}
 ```
+
+**Database Schema** (migration 007):
+```sql
+ALTER TABLE linkedin_sessions
+ADD COLUMN profile_id TEXT,
+ADD COLUMN warming_status TEXT DEFAULT 'pending',
+ADD COLUMN warmed_at TIMESTAMPTZ;
+```
+
+**Key Principle**: **Never delete warmed browser profiles**. The account isolation system keeps each account's profile separate - preserve them.
 
 ### Issue 2: Proxy Connection Failures
 
@@ -1520,34 +1532,34 @@ This architecture provides a **simple, proven approach** using:
 7. ✅ **Conservative limits** - 50% of known safe thresholds
 8. ✅ **Scraper pool isolation** - Zero risk to user accounts
 
-**Status**: 🟡 Testing Phase - Multi-account architecture implemented, residential proxy configuration in progress
+**Status**: 🟢 Production Ready - Profile warming system verified end-to-end
 
-**Current Blockers**:
-- Residential proxy connection needs verification
-- First-time CAPTCHA requires one-time manual completion per account
+**Completed**:
+- ✅ Multi-account isolation (AccountManager)
+- ✅ Hardened human behavior (IdlePatternGenerator)
+- ✅ Residential proxy (Decodo) configured and tested
+- ✅ Profile warming system with CLI + API
+- ✅ E2E test passed with real LinkedIn account
 
 **Production UX Reality**:
-- Users complete CAPTCHA/verification **once** on first connection
+- Users complete CAPTCHA/verification **once** via CLI warming script
 - After that, browser profile is trusted and automation runs indefinitely
 - This is standard for all LinkedIn tools (Phantombuster, Dripify, etc.)
 
 **Next Steps**:
-1. ✅ Implement multi-account isolation (AccountManager)
-2. ✅ Implement hardened human behavior (IdlePatternGenerator)
-3. 🔄 Configure and test residential proxy
-4. 🔄 Warm up test accounts (one-time CAPTCHA completion)
-5. ⬜ 48-hour monitoring test
-6. ⬜ Deploy to production
+1. ⬜ 48-hour monitoring test
+2. ⬜ Deploy to production
+3. ⬜ Build web app UI for warming flow
 
-**Files Changed (v3.4)**:
-- `app/services/linkedin/account_manager.py` - NEW: Multi-account profile management
-- `app/services/linkedin/human_behavior.py` - Added IdlePatternGenerator, ExtractionConfig
+**Files Changed (v3.5)**:
+- `app/services/linkedin/account_manager.py` - Multi-account profile management
+- `app/services/linkedin/human_behavior.py` - IdlePatternGenerator, ExtractionConfig
 - `app/services/linkedin/connection_extractor.py` - Integrated hardened behavior
 - `app/services/linkedin/credential_auth.py` - Account-based profile isolation, checkpoint handling
-- `app/services/linkedin/proxy_manager.py` - SmartProxy username/password support
-- `scripts/save_test_auth.py` - Account-specific cache files
-- `scripts/manual_login.py` - NEW: Manual checkpoint completion
-- `test_extraction_cached.py` - Added --email and --clear flags
+- `app/services/linkedin/proxy_manager.py` - Decodo username/password support
+- `app/api/routes/linkedin.py` - NEW: `/session/{id}/warm` endpoint
+- `scripts/save_test_auth.py` - Production-ready with `--session-id` and `--api-url` flags
+- `supabase/migrations/007_warming_status.sql` - NEW: warming_status, profile_id columns
 
 **Resources**:
 - [playwright-stealth GitHub](https://github.com/AtuboDad/playwright_stealth)

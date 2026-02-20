@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-ONE-TIME setup script: authenticate with LinkedIn and cache cookies for tests.
+LinkedIn Profile Warming Script
 
-Run this once from the agencity/ directory:
-    python scripts/save_test_auth.py
+This script authenticates with LinkedIn and "warms" the browser profile so
+subsequent automation runs without CAPTCHA or verification.
+
+Usage:
+    # Local testing (saves cookies to local JSON file)
+    python scripts/save_test_auth.py --email="you@example.com"
+
+    # Production (saves to Supabase via API)
+    python scripts/save_test_auth.py --email="you@example.com" --session-id="abc123"
 
 What this does:
   1. Opens a persistent browser profile keyed to the EMAIL (hashed)
   2. Logs in with your LinkedIn credentials
-  3. Saves the cookies to .linkedin_cache_{email_hash}.json
+  3. Waits for you to complete any CAPTCHA/verification
+  4. Saves cookies to local file OR Supabase (if --session-id provided)
 
-IMPORTANT: Each LinkedIn account gets its own isolated browser profile.
-This prevents cookie pollution between accounts.
-
-After this runs:
-  - LinkedIn will have sent exactly ONE sign-in email (the first-time device trust)
-  - All subsequent test runs load from the cache → no login → no emails
-  - The cache is valid for ~1 year (li_at cookie lifespan). Re-run when it expires.
-
-Environment variables (optional — falls back to prompts):
-    LINKEDIN_TEST_EMAIL     LinkedIn test account email
-    LINKEDIN_TEST_PASSWORD  LinkedIn test account password
+After warming:
+  - The browser profile is "trusted" by LinkedIn
+  - Subsequent automation runs won't trigger verification
+  - Profile stays valid for ~1 year (li_at cookie lifespan)
 """
 
 import asyncio
@@ -28,6 +29,9 @@ import json
 import os
 import sys
 from pathlib import Path
+
+import click
+import httpx
 
 # Allow running from the agencity/ directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,97 +46,181 @@ def get_cache_path(email: str) -> Path:
     return Path(f".linkedin_cache_{profile_id}.json")
 
 
-# Legacy cache path for backwards compatibility
-LEGACY_CACHE_PATH = Path(".linkedin_test_cache.json")
+def print_header():
+    """Print the script header."""
+    print()
+    print("=" * 60)
+    print("  LinkedIn Profile Warming")
+    print("=" * 60)
+    print()
 
 
-async def main() -> None:
-    email = os.getenv("LINKEDIN_TEST_EMAIL", "").strip()
-    password = os.getenv("LINKEDIN_TEST_PASSWORD", "").strip()
+def print_step(step: int, total: int, message: str):
+    """Print a step in the process."""
+    print(f"[{step}/{total}] {message}")
 
-    if not email:
-        email = input("LinkedIn account email: ").strip()
+
+@click.command()
+@click.option("--email", prompt="LinkedIn email", help="LinkedIn account email")
+@click.option("--password", default=None, help="LinkedIn password (will prompt if not provided)")
+@click.option("--session-id", default=None, help="Link to existing session in Supabase")
+@click.option("--api-url", default="http://localhost:8000", help="API base URL")
+def main(email: str, password: str, session_id: str, api_url: str):
+    """Warm a LinkedIn browser profile for automation."""
+    asyncio.run(run_warming(email, password, session_id, api_url))
+
+
+async def run_warming(email: str, password: str, session_id: str, api_url: str):
+    """Main warming logic."""
+    # Get password if not provided
     if not password:
-        password = input("LinkedIn account password: ").strip()
+        password = os.getenv("LINKEDIN_TEST_PASSWORD", "").strip()
+    if not password:
+        import getpass
+        password = getpass.getpass("LinkedIn password: ")
 
     if not email or not password:
-        print("❌ Email and password are required.")
+        print("Error: Email and password are required.")
         sys.exit(1)
 
     # Get account-specific profile ID and cache path
     profile_id = AccountManager.get_profile_id(email)
     cache_path = get_cache_path(email)
 
-    print()
-    print("=" * 70)
-    print("LinkedIn Auth Cache — ONE-TIME SETUP")
-    print("=" * 70)
+    print_header()
     print(f"  Account    : {email}")
-    print(f"  Profile ID : {profile_id}  (isolated browser profile)")
-    print(f"  Cache file : {cache_path}")
-    print()
-    print("⚠️  LinkedIn will send ONE sign-in email for this first login.")
-    print("   After this, the profile is trusted and no more emails will arrive.")
+    print(f"  Profile ID : {profile_id}")
+    if session_id:
+        print(f"  Session ID : {session_id}")
+        print(f"  API URL    : {api_url}")
+    else:
+        print(f"  Cache file : {cache_path}")
     print()
 
+    # Initialize auth
     auth = LinkedInCredentialAuth()
+    total_steps = 3
 
-    print("🔐 Logging in...")
+    # Step 1: Open browser and login
+    print_step(1, total_steps, "Opening browser for LinkedIn login...")
     print()
-    print("📌 A browser window will open. If LinkedIn shows a security checkpoint:")
-    print("   1. Complete the CAPTCHA or email/SMS verification in the browser")
-    print("   2. The script will automatically detect when you're logged in")
-    print("   3. Wait up to 5 minutes to complete verification")
+    print("    A Chrome window will open.")
+    print("    Enter your password if prompted.")
+    print("    Complete any CAPTCHA or verification shown.")
+    print("    Wait up to 5 minutes to complete verification.")
     print()
 
-    # Note: email is used to derive the profile ID automatically
     result = await auth.login(
         email=email,
         password=password,
     )
 
-    # Handle 2FA
+    # Handle 2FA if required
     if result["status"] == "2fa_required":
         print()
-        print("🔐 2FA required — check your email or authenticator app.")
-        code = input("Enter the 6-digit verification code: ").strip()
+        print("    2FA required - check your email or authenticator app.")
+        code = input("    Enter the 6-digit verification code: ").strip()
 
         result = await auth.login(
             email=email,
             password=password,
-            user_id=TEST_USER_ID,
             verification_code=code,
             resume_state=result["verification_state"],
         )
 
+    # Handle checkpoint timeout
     if result["status"] == "checkpoint_required":
-        print(f"\n⚠️  {result.get('message', 'Checkpoint timeout')}")
-        print("   The browser closed before you completed verification.")
-        print("   Run this script again and complete the checkpoint faster.")
+        print()
+        print(f"    {result.get('message', 'Checkpoint timeout')}")
+        print("    The browser closed before verification completed.")
+        print("    Run this script again and complete the checkpoint faster.")
         sys.exit(1)
-    elif result["status"] != "connected":
-        print(f"\n❌ Login failed: {result.get('error', 'unknown error')}")
+
+    # Handle failure
+    if result["status"] != "connected":
+        print()
+        print(f"    Login failed: {result.get('error', 'unknown error')}")
         sys.exit(1)
 
     cookies = result["cookies"]
 
-    # Persist cookies to the account-specific cache file
+    # Step 2: Show login success
+    print_step(2, total_steps, "Waiting for login...")
+    print()
+    print("    Status: Logged in successfully!")
+    print(f"    Cookies: {', '.join(cookies.keys())}")
+    print()
+
+    # Step 3: Save to appropriate destination
+    if session_id:
+        print_step(3, total_steps, "Saving to Agencity...")
+        await save_to_supabase(api_url, session_id, cookies, profile_id)
+    else:
+        print_step(3, total_steps, "Saving to local cache...")
+        save_to_local(cache_path, cookies)
+
+    print()
+    print("=" * 60)
+    print("  Done! Profile warmed successfully.")
+    print("=" * 60)
+    print()
+
+    if session_id:
+        print("You can now close this window and return to the web app.")
+    else:
+        print("You can now run tests without triggering login emails:")
+        print(f"   python test_extraction_cached.py --email {email}")
+        print("   pytest tests/")
+    print()
+
+
+async def save_to_supabase(api_url: str, session_id: str, cookies: dict, profile_id: str):
+    """Save warming data to Supabase via API."""
+    url = f"{api_url}/api/v1/linkedin/session/{session_id}/warm"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json={
+                "cookies": cookies,
+                "profile_id": profile_id,
+            })
+
+            if response.status_code == 200:
+                print()
+                print("    Saved to Agencity successfully!")
+            elif response.status_code == 404:
+                print()
+                print(f"    Error: Session '{session_id}' not found.")
+                print("    Make sure the session ID is correct.")
+                sys.exit(1)
+            else:
+                print()
+                print(f"    Error: API returned {response.status_code}")
+                print(f"    {response.text}")
+                sys.exit(1)
+
+    except httpx.ConnectError:
+        print()
+        print(f"    Error: Could not connect to API at {api_url}")
+        print("    Make sure the API server is running.")
+        sys.exit(1)
+    except Exception as e:
+        print()
+        print(f"    Error: {e}")
+        sys.exit(1)
+
+
+def save_to_local(cache_path: Path, cookies: dict):
+    """Save cookies to local JSON file."""
     cache_path.write_text(json.dumps(cookies, indent=2))
+    print()
+    print(f"    Saved to {cache_path.resolve()}")
 
     # Also write to legacy path for backwards compatibility
-    LEGACY_CACHE_PATH.write_text(json.dumps(cookies, indent=2))
-
-    print()
-    print("✅ Success! Cookies cached.")
-    print(f"   Cache file : {cache_path.resolve()}")
-    print(f"   Legacy file: {LEGACY_CACHE_PATH.resolve()}")
-    print(f"   Cookies    : {', '.join(cookies.keys())}")
-    print()
-    print("You can now run tests without triggering any login emails:")
-    print(f"   python test_extraction_cached.py --email {email}")
-    print("   pytest tests/")
-    print()
+    legacy_path = Path(".linkedin_test_cache.json")
+    legacy_path.write_text(json.dumps(cookies, indent=2))
+    print(f"    Saved to {legacy_path.resolve()} (legacy)")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

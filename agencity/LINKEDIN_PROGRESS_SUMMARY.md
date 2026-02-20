@@ -254,12 +254,41 @@ Updated `connection_extractor.py` to use stable DOM attributes instead of obfusc
 
 ---
 
+### 8. Profile Warming System
+- **Status**: ✅ Working
+- **Files**:
+  - `scripts/save_test_auth.py` - CLI script for warming profiles
+  - `app/api/routes/linkedin.py` - `/session/{id}/warm` endpoint
+  - `supabase/migrations/007_warming_status.sql` - Database schema
+- **Features**:
+  - One-time CAPTCHA/verification completion per account
+  - CLI script with `--session-id` flag for Supabase integration
+  - Saves encrypted cookies to database via API
+  - Tracks `warming_status` (pending/warmed) and `warmed_at` timestamp
+  - Browser profile ID stored for session isolation
+
+**Usage**:
+```bash
+# Local testing (saves to JSON file)
+python scripts/save_test_auth.py --email="you@example.com"
+
+# Production (saves to Supabase)
+python scripts/save_test_auth.py \
+  --email="you@example.com" \
+  --session-id="abc123" \
+  --api-url="http://localhost:8001"
+```
+
+**Test**: E2E verified - browser opens, user completes verification, cookies saved to Supabase
+
+---
+
 ## 🎯 Next Steps
 
 1. **Error Handling**
    - Handle network failures gracefully
    - Retry logic for transient errors
-   - Alert system 1 persistent failures
+   - Alert system for persistent failures
 
 2. **Rate Limiting**
    - Enforce max connections per hour/day
@@ -633,8 +662,8 @@ python test_cookie_reuse.py <session-id>
 
 ---
 
-**Last Updated**: February 19, 2026
+**Last Updated**: February 20, 2026
 
-**Status**: ✅ Authentication working | ✅ Session persistence working | ✅ Navigation working | ✅ DOM selectors working | ✅ Adaptive re-auth working | ✅ Proxy support working
+**Status**: ✅ Authentication working | ✅ Session persistence working | ✅ Navigation working | ✅ DOM selectors working | ✅ Adaptive re-auth working | ✅ Proxy support working | ✅ Profile warming working
 
-**Latest Commit**: `400c0a4` - feat: implement residential proxy support with sticky sessions + geo-targeting
+**Latest Commit**: `feat: add profile warming system with CLI + API integration`

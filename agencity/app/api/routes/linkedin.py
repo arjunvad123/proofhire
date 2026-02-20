@@ -19,7 +19,7 @@ from app.services.linkedin.extraction_task import run_extraction_sync
 from app.services.linkedin.proxy_manager import ProxyManager
 
 
-router = APIRouter(prefix="/api/v1/linkedin", tags=["linkedin"])
+router = APIRouter(prefix="/v1/linkedin", tags=["linkedin"])
 
 
 # --- Request/Response Models ---
@@ -64,6 +64,12 @@ class ConnectResponse(BaseModel):
 class RefreshRequest(BaseModel):
     """Request to refresh session cookies."""
     cookies: Dict[str, Any]
+
+
+class WarmSessionRequest(BaseModel):
+    """Request to mark a session as warmed from CLI."""
+    cookies: Dict[str, Any]
+    profile_id: str
 
 
 class SessionStatusResponse(BaseModel):
@@ -351,6 +357,58 @@ async def disconnect_linkedin(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to disconnect: {str(e)}")
+
+
+@router.post("/session/{session_id}/warm")
+async def warm_session(
+    session_id: str,
+    request: WarmSessionRequest,
+    session_manager: LinkedInSessionManager = Depends(get_session_manager)
+):
+    """
+    Mark a session as warmed with profile data from CLI.
+
+    This is called by the `save_test_auth.py` script after the user
+    completes CAPTCHA/verification in the browser. The session is then
+    ready for automated use.
+
+    Args:
+        session_id: The session ID to warm
+        request: Contains cookies and profile_id from the CLI
+    """
+    from datetime import datetime, timezone
+
+    try:
+        # Verify session exists
+        session = await session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Encrypt the cookies
+        encryption = CookieEncryption()
+        encrypted_cookies = encryption.encrypt_cookies(request.cookies)
+
+        # Update session with warming data
+        supabase = get_supabase_client()
+        result = supabase.table('linkedin_sessions').update({
+            'cookies_encrypted': encrypted_cookies,
+            'profile_id': request.profile_id,
+            'warming_status': 'warmed',
+            'warmed_at': datetime.now(timezone.utc).isoformat(),
+            'status': 'active',
+            'health': 'healthy',
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }).eq('id', session_id).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to update session")
+
+        return {"status": "ok", "message": "Session warmed successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to warm session: {str(e)}")
 
 
 @router.post("/session/{session_id}/pause")
