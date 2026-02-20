@@ -15,7 +15,7 @@ from app.core.database import get_supabase_client
 from app.services.linkedin.session_manager import LinkedInSessionManager
 from app.services.linkedin.credential_auth import LinkedInCredentialAuth
 from app.services.linkedin.encryption import CookieEncryption
-from app.services.linkedin.proxy_manager import ProxyManager
+from app.services.linkedin.extraction_task import run_extraction_sync
 
 
 router = APIRouter(prefix="/api/v1/linkedin", tags=["linkedin"])
@@ -428,8 +428,8 @@ async def start_connection_extraction(
 
     job_id = job_result.data[0]['id']
 
-    # TODO: Add background task to run extraction
-    # background_tasks.add_task(run_connection_extraction, job_id, request.session_id)
+    # Run extraction in background
+    background_tasks.add_task(run_extraction_sync, job_id, request.session_id, supabase)
 
     return ExtractConnectionsResponse(
         job_id=job_id,
@@ -489,6 +489,44 @@ def _estimate_remaining(job: dict) -> int:
 
     # Linear estimate
     return max(1, int(15 * (100 - progress) / 100))
+
+
+@router.get("/connections/{company_id}")
+async def list_connections(
+    company_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    enrichment_status: Optional[str] = None
+):
+    """
+    List extracted connections for a company.
+
+    Supports pagination and filtering by enrichment status.
+    """
+    supabase = get_supabase_client()
+
+    query = supabase.table('linkedin_connections')\
+        .select('id, linkedin_url, full_name, current_title, current_company, headline, profile_image_url, connected_at_text, priority_score, priority_tier, enrichment_status, created_at')\
+        .eq('company_id', company_id)\
+        .order('created_at', desc=True)
+
+    if enrichment_status:
+        query = query.eq('enrichment_status', enrichment_status)
+
+    result = query.range(offset, offset + limit - 1).execute()
+
+    # Get total count
+    count_result = supabase.table('linkedin_connections')\
+        .select('id', count='exact')\
+        .eq('company_id', company_id)\
+        .execute()
+
+    return {
+        'connections': result.data or [],
+        'total': count_result.count or 0,
+        'limit': limit,
+        'offset': offset
+    }
 
 
 # --- Prioritization Endpoints (Phase 3 Placeholder) ---
