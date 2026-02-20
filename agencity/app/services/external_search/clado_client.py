@@ -7,10 +7,14 @@ Uses parallel LLM inference to evaluate candidates against queries.
 Pricing: ~$0.01 per result
 """
 
+import asyncio
+import logging
 import httpx
 from typing import Optional
 from pydantic import BaseModel
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class CladoProfile(BaseModel):
@@ -71,6 +75,8 @@ class CladoClient:
         self.api_key = api_key or getattr(settings, 'clado_api_key', None)
         self.base_url = "https://search.clado.ai/api"  # Clado API base URL
         self.enabled = bool(self.api_key)
+        self.timeout_seconds = settings.external_api_timeout_seconds
+        self.max_retries = max(settings.external_api_max_retries, 0)
 
     async def search(
         self,
@@ -90,49 +96,68 @@ class CladoClient:
             CladoSearchResult with matching profiles
         """
         if not self.enabled:
-            return self._mock_search(query, limit)
+            if settings.allow_mock_external_search:
+                logger.warning("Clado API key missing, returning mock search results")
+                return self._mock_search(query, limit)
+            logger.warning("Clado API key missing, returning no results")
+            return CladoSearchResult(
+                profiles=[],
+                total_matches=0,
+                query_interpreted=query,
+                search_id=""
+            )
 
-        async with httpx.AsyncClient() as client:
-            try:
-                # Clado uses GET with query parameters
-                response = await client.get(
-                    f"{self.base_url}/search",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}"
-                    },
-                    params={
-                        "query": query,
-                        "limit": limit,
-                        "advanced_filtering": "true"  # Use AI filtering
-                    },
-                    timeout=60.0  # Clado can take time for complex queries
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    return CladoSearchResult(
-                        profiles=[CladoProfile(**p) for p in data.get("profiles", [])],
-                        total_matches=data.get("total_matches", 0),
-                        query_interpreted=data.get("query_interpreted", query),
-                        search_id=data.get("search_id", "")
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    # Clado uses GET with query parameters
+                    response = await client.get(
+                        f"{self.base_url}/search",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        params={
+                            "query": query,
+                            "limit": limit,
+                            "advanced_filtering": "true",
+                        },
                     )
-                else:
-                    print(f"Clado API error: {response.status_code}")
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        return CladoSearchResult(
+                            profiles=[CladoProfile(**p) for p in data.get("profiles", [])],
+                            total_matches=data.get("total_matches", 0),
+                            query_interpreted=data.get("query_interpreted", query),
+                            search_id=data.get("search_id", ""),
+                        )
+
+                    if response.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries:
+                        backoff = 0.5 * (2 ** attempt)
+                        logger.warning("Clado transient error %s, retrying in %.1fs", response.status_code, backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    logger.error("Clado API error status=%s body=%s", response.status_code, response.text[:500])
                     return CladoSearchResult(
                         profiles=[],
                         total_matches=0,
                         query_interpreted=query,
-                        search_id=""
+                        search_id="",
                     )
 
-            except Exception as e:
-                print(f"Clado API exception: {e}")
-                return CladoSearchResult(
-                    profiles=[],
-                    total_matches=0,
-                    query_interpreted=query,
-                    search_id=""
-                )
+                except httpx.HTTPError as exc:
+                    if attempt < self.max_retries:
+                        backoff = 0.5 * (2 ** attempt)
+                        logger.warning("Clado request failed (%s), retrying in %.1fs", exc, backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    logger.exception("Clado API exception after retries")
+                    return CladoSearchResult(
+                        profiles=[],
+                        total_matches=0,
+                        query_interpreted=query,
+                        search_id="",
+                    )
 
     async def enrich_profile(self, linkedin_url: str) -> Optional[CladoProfile]:
         """
@@ -147,7 +172,7 @@ class CladoClient:
         if not self.enabled:
             return None
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             try:
                 response = await client.post(
                     f"{self.base_url}/enrich",
@@ -156,16 +181,32 @@ class CladoClient:
                         "Content-Type": "application/json"
                     },
                     json={"linkedin_url": linkedin_url},
-                    timeout=30.0
                 )
 
                 if response.status_code == 200:
                     return CladoProfile(**response.json())
+                logger.error("Clado enrich error status=%s body=%s", response.status_code, response.text[:500])
                 return None
 
-            except Exception as e:
-                print(f"Clado enrich exception: {e}")
+            except httpx.HTTPError:
+                logger.exception("Clado enrich request failed")
                 return None
+
+    async def health_check(self) -> dict:
+        """Return connectivity/auth status for Clado provider."""
+        if not self.enabled:
+            return {"provider": "clado", "ok": False, "reason": "missing_api_key"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.get(
+                    f"{self.base_url}/search",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    params={"query": "software engineer", "limit": 1},
+                )
+                ok = response.status_code == 200
+                return {"provider": "clado", "ok": ok, "status_code": response.status_code}
+        except httpx.HTTPError as exc:
+            return {"provider": "clado", "ok": False, "reason": str(exc)}
 
     def _mock_search(self, query: str, limit: int) -> CladoSearchResult:
         """

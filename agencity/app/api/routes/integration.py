@@ -4,22 +4,25 @@ Pipeline API routes for Agencity.
 Endpoints for managing candidate pipeline status and feedback actions.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Header, status
 from postgrest.exceptions import APIError
 
 from app.core.database import get_supabase_client
 from app.api.models.integration import (
     CreateLinkageRequest,
     UpdateLinkageRequest,
+    LinkageStatus,
     LinkageResponse,
     LinkageWithCandidateResponse,
     LinkagesListResponse,
     RecordFeedbackRequest,
+    FeedbackAction,
     FeedbackResponse,
     FeedbackStatsResponse,
     ProofHireIntegrationStats,
@@ -34,7 +37,16 @@ from app.api.models.integration import (
     GenerateCacheRequest,
     GenerateAllCachesRequest,
     CurationCacheStatus,
+    InviteToProofHireRequest,
+    InviteToProofHireResponse,
+    ProofHireRunWebhookRequest,
+    ProofHireRunWebhookResponse,
+    DecisionPacketResponse,
 )
+from app.config import settings
+from app.services.proofhire_client import proofhire_client
+from app.services.external_search.clado_client import clado_client
+from app.services.external_search.pdl_client import pdl_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -226,6 +238,221 @@ async def update_linkage(linkage_id: str, request: UpdateLinkageRequest):
     except APIError as e:
         logger.error(f"Supabase error updating linkage: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PROOFHIRE OPERATIONAL ENDPOINTS
+# ============================================================================
+
+@router.post("/proofhire/invite", response_model=InviteToProofHireResponse, status_code=201)
+async def invite_candidate_to_proofhire(request: InviteToProofHireRequest):
+    """
+    Create a ProofHire application and persist candidate linkage.
+
+    This is the operational replacement for deprecated linkage flow.
+    """
+    supabase = get_supabase_client()
+
+    try:
+        company = supabase.table("companies").select("id").eq("id", request.company_id).execute()
+        if not company.data:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        candidate_result = (
+            supabase.table("people")
+            .select("id, company_id, full_name, email, github_url")
+            .eq("id", request.candidate_id)
+            .eq("company_id", request.company_id)
+            .execute()
+        )
+        if not candidate_result.data:
+            raise HTTPException(status_code=404, detail="Candidate not found for company")
+
+        candidate = candidate_result.data[0]
+        if not candidate.get("email"):
+            raise HTTPException(
+                status_code=400,
+                detail="Candidate is missing email and cannot be invited to ProofHire",
+            )
+
+        try:
+            app_payload = await proofhire_client.create_application(
+                proofhire_role_id=request.proofhire_role_id,
+                candidate_name=candidate.get("full_name") or "Candidate",
+                candidate_email=candidate["email"],
+                github_url=candidate.get("github_url"),
+            )
+        except Exception as exc:
+            logger.exception("ProofHire application creation failed")
+            raise HTTPException(
+                status_code=502,
+                detail=f"ProofHire application creation failed: {exc}",
+            ) from exc
+
+        proofhire_application_id = app_payload.get("id")
+        if not proofhire_application_id:
+            raise HTTPException(status_code=502, detail="ProofHire response missing application id")
+
+        existing = (
+            supabase.table("candidate_linkages")
+            .select("id")
+            .eq("agencity_candidate_id", request.candidate_id)
+            .execute()
+        )
+
+        linkage_data = {
+            "company_id": request.company_id,
+            "agencity_candidate_id": request.candidate_id,
+            "agencity_search_id": request.search_id,
+            "proofhire_application_id": proofhire_application_id,
+            "proofhire_role_id": request.proofhire_role_id,
+            "status": LinkageStatus.SIMULATION_PENDING.value,
+        }
+
+        if existing.data:
+            linkage = (
+                supabase.table("candidate_linkages")
+                .update(linkage_data)
+                .eq("id", existing.data[0]["id"])
+                .execute()
+            )
+        else:
+            linkage = supabase.table("candidate_linkages").insert(linkage_data).execute()
+
+        if not linkage.data:
+            raise HTTPException(status_code=500, detail="Failed to persist candidate linkage")
+
+        linkage_row = linkage.data[0]
+        return InviteToProofHireResponse(
+            linkage_id=linkage_row["id"],
+            candidate_id=request.candidate_id,
+            proofhire_application_id=linkage_row["proofhire_application_id"],
+            proofhire_role_id=linkage_row["proofhire_role_id"],
+            status=linkage_row["status"],
+        )
+
+    except HTTPException:
+        raise
+    except APIError as e:
+        logger.error("Supabase error inviting candidate to ProofHire: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/proofhire/webhooks/run-complete", response_model=ProofHireRunWebhookResponse)
+async def proofhire_run_complete_webhook(
+    request: ProofHireRunWebhookRequest,
+    x_internal_key: Optional[str] = Header(None),
+):
+    """Update linkage status when ProofHire run completes."""
+    supabase = get_supabase_client()
+
+    if settings.proofhire_internal_api_key:
+        if not proofhire_client.verify_internal_key(x_internal_key):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid internal API key",
+            )
+
+    try:
+        linkage_result = (
+            supabase.table("candidate_linkages")
+            .select("*")
+            .eq("proofhire_application_id", request.proofhire_application_id)
+            .execute()
+        )
+
+        if not linkage_result.data:
+            return ProofHireRunWebhookResponse(status="ignored_no_linkage")
+
+        linkage = linkage_result.data[0]
+        linkage_id = linkage["id"]
+        # Linkage tracks milestone completion (not score quality), so both pass/fail
+        # terminal run events are marked complete.
+        new_status = LinkageStatus.SIMULATION_COMPLETE.value
+
+        supabase.table("candidate_linkages").update({"status": new_status}).eq("id", linkage_id).execute()
+
+        if request.proofhire_score is not None:
+            supabase.table("feedback_actions").insert(
+                {
+                    "company_id": linkage["company_id"],
+                    "candidate_id": linkage["agencity_candidate_id"],
+                    "action": FeedbackAction.INTERVIEWED.value if request.success else FeedbackAction.IGNORED.value,
+                    "proofhire_application_id": request.proofhire_application_id,
+                    "proofhire_score": request.proofhire_score,
+                    "metadata": {
+                        "run_id": request.run_id,
+                        "success": request.success,
+                        "webhook_metadata": request.metadata or {},
+                    },
+                }
+            ).execute()
+
+        return ProofHireRunWebhookResponse(status="ok", linkage_id=linkage_id)
+
+    except APIError as e:
+        logger.error("Supabase error handling ProofHire webhook: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/proofhire/decision-packet/{proofhire_application_id}", response_model=DecisionPacketResponse)
+async def get_decision_packet(proofhire_application_id: str):
+    """Return founder-facing decision packet data for one application."""
+    supabase = get_supabase_client()
+
+    try:
+        linkage_result = (
+            supabase.table("candidate_linkages")
+            .select("*")
+            .eq("proofhire_application_id", proofhire_application_id)
+            .execute()
+        )
+        if not linkage_result.data:
+            raise HTTPException(status_code=404, detail="Linkage not found")
+
+        linkage_row = linkage_result.data[0]
+        candidate_result = (
+            supabase.table("people")
+            .select("id, full_name, email, linkedin_url, github_url, current_title, current_company")
+            .eq("id", linkage_row["agencity_candidate_id"])
+            .execute()
+        )
+        candidate = candidate_result.data[0] if candidate_result.data else {}
+
+        feedback_result = (
+            supabase.table("feedback_actions")
+            .select("id, action, proofhire_score, notes, metadata, created_at")
+            .eq("proofhire_application_id", proofhire_application_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        return DecisionPacketResponse(
+            linkage=LinkageResponse(**linkage_row),
+            candidate=candidate,
+            feedback=feedback_result.data or [],
+        )
+
+    except HTTPException:
+        raise
+    except APIError as e:
+        logger.error("Supabase error building decision packet: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/providers/health", response_model=Dict[str, Any])
+async def get_external_providers_health():
+    """Health snapshot for external dependencies used in search/integration."""
+    clado_health, pdl_health, proofhire_health = await asyncio.gather(
+        clado_client.health_check(),
+        pdl_client.health_check(),
+        proofhire_client.health_check(),
+    )
+    providers = [clado_health, pdl_health, proofhire_health]
+    return {
+        "ok": all(p.get("ok") for p in providers),
+        "providers": providers,
+    }
 
 
 # ============================================================================
@@ -509,8 +736,8 @@ async def update_candidate_status(
 
 @router.get("/curation/cache/{company_id}/{role_id}", response_model=CurationCacheResponse)
 async def get_curation_cache(
-    company_id: str,
-    role_id: str,
+    company_id: UUID,
+    role_id: UUID,
     force_refresh: bool = Query(False, description="Force refresh cache")
 ):
     """
@@ -527,7 +754,7 @@ async def get_curation_cache(
             cache_result = supabase.table("curation_cache").select(
                 "id, role_id, shortlist, metadata, total_searched, enriched_count, "
                 "avg_match_score, generated_at, expires_at"
-            ).eq("company_id", company_id).eq("role_id", role_id).gt(
+            ).eq("company_id", str(company_id)).eq("role_id", str(role_id)).gt(
                 "expires_at", datetime.utcnow().isoformat()
             ).execute()
 
@@ -535,13 +762,13 @@ async def get_curation_cache(
                 cache = cache_result.data[0]
 
                 # Get role title
-                role_result = supabase.table("roles").select("title").eq("id", role_id).execute()
+                role_result = supabase.table("roles").select("title").eq("id", str(role_id)).execute()
                 role_title = role_result.data[0]["title"] if role_result.data else "Unknown Role"
 
                 logger.info(f"Cache hit for role {role_id}")
 
                 return CurationCacheResponse(
-                    role_id=role_id,
+                    role_id=str(role_id),
                     role_title=role_title,
                     status="cached",
                     shortlist=cache["shortlist"],
@@ -664,7 +891,7 @@ async def generate_all_curation_caches(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/curation/cache/status/{company_id}", response_model=CacheStatusResponse)
+@router.get("/curation/cache-status/{company_id}", response_model=CacheStatusResponse)
 async def get_cache_status(company_id: str):
     """
     Get curation cache status for all company roles.

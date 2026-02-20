@@ -24,6 +24,7 @@ from app.services.company_db import company_db
 from app.services.network_index import network_index_service, NetworkIndex
 from app.services.warm_path_finder import warm_path_finder, WarmPath
 from app.services.external_search.clado_client import clado_client, CladoProfile
+from app.services.external_search.pdl_client import pdl_client, PDLProfile
 from app.services.external_search.query_generator import query_generator
 from app.config import settings
 
@@ -115,6 +116,12 @@ class SearchResult(BaseModel):
     deep_researched_count: int
     research_enabled: bool
 
+    # External provider diagnostics
+    external_provider_stats: dict = {}
+    external_provider_health: dict = {}
+    external_diagnostics: list[str] = []
+    external_yield_ok: bool = True
+
 
 # =============================================================================
 # UNIFIED SEARCH ENGINE
@@ -198,9 +205,15 @@ class UnifiedSearchEngine:
 
         # Step 3: Search external (Tier 2-3) if enabled
         external_candidates = []
+        external_meta = {
+            "provider_stats": {},
+            "provider_health": {},
+            "diagnostics": [],
+            "yield_ok": True,
+        }
         if include_external:
             print("\n🔎 Step 3: Searching external sources...")
-            external_candidates = await self._search_external(
+            external_candidates, external_meta = await self._search_external(
                 role_title, required_skills, preferred_skills,
                 location, network_stats, network_index, limit
             )
@@ -259,7 +272,11 @@ class UnifiedSearchEngine:
             high_urgency_count=len([c for c in final_candidates if c.timing_urgency == "high"]),
             timing_enabled=include_timing,
             deep_researched_count=researched_count,
-            research_enabled=deep_research
+            research_enabled=deep_research,
+            external_provider_stats=external_meta.get("provider_stats", {}),
+            external_provider_health=external_meta.get("provider_health", {}),
+            external_diagnostics=external_meta.get("diagnostics", []),
+            external_yield_ok=external_meta.get("yield_ok", True),
         )
 
     # =========================================================================
@@ -320,7 +337,7 @@ class UnifiedSearchEngine:
         network_stats: dict,
         network_index: NetworkIndex,
         limit: int
-    ) -> list[Candidate]:
+    ) -> tuple[list[Candidate], dict]:
         """Search external APIs and find warm paths."""
 
         # Generate smart queries
@@ -333,30 +350,37 @@ class UnifiedSearchEngine:
             network_schools=network_stats.get('top_schools', [])
         )
 
-        # Search Clado
-        clado_results = await clado_client.search(queries.primary_query.query, limit=limit)
+        # Query both external providers in parallel.
+        clado_task = clado_client.search(queries.primary_query.query, limit=limit)
+        pdl_task = pdl_client.search(
+            queries.primary_query.query,
+            limit=limit,
+            location=location,
+        )
+        clado_results, pdl_results = await asyncio.gather(clado_task, pdl_task)
+        clado_health, pdl_health = await asyncio.gather(
+            clado_client.health_check(),
+            pdl_client.health_check(),
+        )
 
         candidates = []
-        for profile in clado_results.profiles:
-            # Find warm paths
-            warm_paths = []
+        seen_linkedin_urls = set()
+        diagnostics = []
 
-            # Check company overlap
-            if profile.current_company:
-                contacts = network_index_service.find_company_contacts(
-                    network_index, profile.current_company
-                )
+        def _build_warm_paths(current_company: Optional[str], education: list[dict], full_name: str) -> list[WarmPath]:
+            warm_paths = []
+            if current_company:
+                contacts = network_index_service.find_company_contacts(network_index, current_company)
                 for contact in contacts[:1]:
                     warm_paths.append(WarmPath(
                         path_type="company_overlap",
                         warmth_score=0.75,
                         connector=contact,
-                        relationship=f"Both at {profile.current_company}",
-                        suggested_message=f"Hey {contact.full_name.split()[0]}! I came across {profile.full_name} who works with you. Would you be open to making an intro?"
+                        relationship=f"Both at {current_company}",
+                        suggested_message=f"Hey {contact.full_name.split()[0]}! I came across {full_name} who works with you. Would you be open to making an intro?"
                     ))
 
-            # Check education overlap
-            for edu in profile.education:
+            for edu in education:
                 school = edu.get("school")
                 if school:
                     contacts = network_index_service.find_school_contacts(network_index, school)
@@ -367,6 +391,17 @@ class UnifiedSearchEngine:
                             connector=contact,
                             relationship=f"Both attended {school}"
                         ))
+            return warm_paths
+
+        for profile in clado_results.profiles:
+            if profile.linkedin_url:
+                seen_linkedin_urls.add(profile.linkedin_url.lower())
+
+            warm_paths = _build_warm_paths(
+                profile.current_company,
+                profile.education,
+                profile.full_name,
+            )
 
             # Determine tier and warmth
             best_path = warm_paths[0] if warm_paths else None
@@ -395,7 +430,73 @@ class UnifiedSearchEngine:
                 intro_message=best_path.suggested_message if best_path else None
             ))
 
-        return candidates
+        for profile in pdl_results.profiles:
+            if profile.linkedin_url and profile.linkedin_url.lower() in seen_linkedin_urls:
+                continue
+
+            if profile.linkedin_url:
+                seen_linkedin_urls.add(profile.linkedin_url.lower())
+
+            warm_paths = _build_warm_paths(
+                profile.current_company,
+                profile.education,
+                profile.full_name,
+            )
+
+            best_path = warm_paths[0] if warm_paths else None
+            warmth_score = best_path.warmth_score * 100 if best_path else 0
+            tier = 2 if warmth_score > 0 else 3
+
+            candidates.append(Candidate(
+                id=profile.id,
+                full_name=profile.full_name,
+                current_title=profile.current_title,
+                current_company=profile.current_company,
+                headline=profile.headline,
+                location=profile.location,
+                linkedin_url=profile.linkedin_url,
+                github_url=profile.github_url,
+                twitter_url=profile.twitter_url,
+                skills=profile.skills,
+                experience=profile.experience,
+                education=profile.education,
+                fit_score=profile.match_score * 100 if profile.match_score <= 1 else profile.match_score,
+                warmth_score=warmth_score,
+                source="external",
+                tier=tier,
+                is_from_network=False,
+                warm_path=best_path,
+                intro_message=best_path.suggested_message if best_path else None
+            ))
+
+        provider_stats = {
+            "clado_total_matches": clado_results.total_matches,
+            "clado_profiles_returned": len(clado_results.profiles),
+            "pdl_total_matches": pdl_results.total_matches,
+            "pdl_profiles_returned": len(pdl_results.profiles),
+            "deduped_external_candidates": len(candidates),
+        }
+        provider_health = {
+            "clado": clado_health,
+            "pdl": pdl_health,
+        }
+
+        if len(candidates) == 0:
+            diagnostics.append(
+                "External search returned zero candidates. Check provider credits, query quality, or provider limits."
+            )
+        if not clado_health.get("ok"):
+            diagnostics.append("Clado provider unhealthy or not configured.")
+        if not pdl_health.get("ok"):
+            diagnostics.append("PDL provider unhealthy or not configured.")
+
+        meta = {
+            "provider_stats": provider_stats,
+            "provider_health": provider_health,
+            "diagnostics": diagnostics,
+            "yield_ok": len(candidates) > 0,
+        }
+        return candidates, meta
 
     async def _add_timing_signals(self, candidates: list[Candidate]) -> list[Candidate]:
         """Add timing/urgency signals to candidates."""
@@ -489,6 +590,8 @@ class UnifiedSearchEngine:
                         self.current_title = c.current_title
                         self.current_company = c.current_company
                         self.linkedin_url = c.linkedin_url
+                        # Perplexity query builder expects location for identity disambiguation.
+                        self.location = c.location
 
                 # Research using Perplexity
                 insights = await engine.researcher.research_candidate(

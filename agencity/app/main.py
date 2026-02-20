@@ -70,6 +70,10 @@ async def health():
         "environment": settings.app_env,
         "llm_configured": bool(settings.openai_api_key),
         "github_configured": bool(settings.github_token),
+        "supabase_configured": bool(settings.supabase_url and settings.supabase_key),
+        "pdl_configured": bool(settings.pdl_api_key),
+        "clado_configured": bool(settings.clado_api_key),
+        "proofhire_configured": bool(settings.proofhire_api_base),
     }
 
 

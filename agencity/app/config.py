@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # People Data Labs
     pdl_api_key: str = ""
     pdl_daily_budget_usd: float = 50.0
+    external_api_timeout_seconds: float = 30.0
+    external_api_max_retries: int = 2
+    allow_mock_external_search: bool = False
 
     # GitHub
     github_token: str = ""
@@ -77,6 +80,11 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "dev-secret-change-in-production"
     access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
+    agencity_internal_api_key: str = ""
+
+    # ProofHire integration
+    proofhire_api_base: str = "http://localhost:8000/api"
+    proofhire_internal_api_key: str = ""
 
     class Config:
         env_file = ".env"

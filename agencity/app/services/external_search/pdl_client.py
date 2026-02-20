@@ -7,10 +7,14 @@ Uses SQL-like queries for searching.
 Pricing: ~$0.10 per enrichment/search result
 """
 
+import asyncio
+import logging
 import httpx
 from typing import Optional
 from pydantic import BaseModel
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PDLProfile(BaseModel):
@@ -70,6 +74,8 @@ class PDLClient:
         self.api_key = api_key or getattr(settings, 'pdl_api_key', None)
         self.base_url = "https://api.peopledatalabs.com/v5"
         self.enabled = bool(self.api_key)
+        self.timeout_seconds = settings.external_api_timeout_seconds
+        self.max_retries = max(settings.external_api_max_retries, 0)
 
     async def search(
         self,
@@ -96,37 +102,49 @@ class PDLClient:
         # Convert natural language to PDL SQL
         sql = self._build_sql_query(query, location, limit)
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.base_url}/person/search",
-                    headers={
-                        "X-Api-Key": self.api_key,
-                        "Content-Type": "application/json"
-                    },
-                    params={
-                        "sql": sql,
-                        "size": min(limit, 100)
-                    },
-                    timeout=60.0
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    profiles = [self._parse_profile(p) for p in data.get("data", [])]
-                    return PDLSearchResult(
-                        profiles=profiles,
-                        total_matches=data.get("total", len(profiles)),
-                        query_used=sql
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            for attempt in range(self.max_retries + 1):
+                try:
+                    response = await client.get(
+                        f"{self.base_url}/person/search",
+                        headers={
+                            "X-Api-Key": self.api_key,
+                            "Content-Type": "application/json"
+                        },
+                        params={
+                            "sql": sql,
+                            "size": min(limit, 100)
+                        },
                     )
-                else:
-                    error = response.json().get("error", {})
-                    print(f"PDL API error: {error.get('message', response.status_code)}")
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        profiles = [self._parse_profile(p) for p in data.get("data", [])]
+                        return PDLSearchResult(
+                            profiles=profiles,
+                            total_matches=data.get("total", len(profiles)),
+                            query_used=sql
+                        )
+
+                    if response.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries:
+                        backoff = 0.5 * (2 ** attempt)
+                        logger.warning("PDL transient error %s, retrying in %.1fs", response.status_code, backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    error_payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+                    error = error_payload.get("error", {})
+                    logger.error("PDL API error status=%s message=%s", response.status_code, error.get("message", "unknown"))
                     return PDLSearchResult(profiles=[], total_matches=0, query_used=sql)
 
-            except Exception as e:
-                print(f"PDL API exception: {e}")
-                return PDLSearchResult(profiles=[], total_matches=0, query_used=query)
+                except httpx.HTTPError as exc:
+                    if attempt < self.max_retries:
+                        backoff = 0.5 * (2 ** attempt)
+                        logger.warning("PDL request failed (%s), retrying in %.1fs", exc, backoff)
+                        await asyncio.sleep(backoff)
+                        continue
+                    logger.exception("PDL API exception after retries")
+                    return PDLSearchResult(profiles=[], total_matches=0, query_used=query)
 
     def _build_sql_query(
         self,
@@ -256,7 +274,7 @@ class PDLClient:
         # Clean LinkedIn URL
         clean_url = linkedin_url.replace("https://", "").replace("http://", "").replace("www.", "")
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             try:
                 response = await client.get(
                     f"{self.base_url}/person/enrich",
@@ -265,17 +283,33 @@ class PDLClient:
                         "Content-Type": "application/json"
                     },
                     params={"profile": clean_url},
-                    timeout=30.0
                 )
 
                 if response.status_code == 200:
                     data = response.json()
                     return self._parse_profile(data.get("data", {}))
+                logger.error("PDL enrich error status=%s body=%s", response.status_code, response.text[:500])
                 return None
 
-            except Exception as e:
-                print(f"PDL enrich exception: {e}")
+            except httpx.HTTPError:
+                logger.exception("PDL enrich request failed")
                 return None
+
+    async def health_check(self) -> dict:
+        """Return connectivity/auth status for PDL provider."""
+        if not self.enabled:
+            return {"provider": "pdl", "ok": False, "reason": "missing_api_key"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.get(
+                    f"{self.base_url}/person/enrich",
+                    headers={"X-Api-Key": self.api_key},
+                    params={"email": "healthcheck@example.com"},
+                )
+                ok = response.status_code in (200, 404)
+                return {"provider": "pdl", "ok": ok, "status_code": response.status_code}
+        except httpx.HTTPError as exc:
+            return {"provider": "pdl", "ok": False, "reason": str(exc)}
 
 
 # Singleton instance

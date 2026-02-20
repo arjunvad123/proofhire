@@ -23,6 +23,7 @@ class FeedbackAction(str, Enum):
     INTERVIEWED = "interviewed"
     CONTACTED = "contacted"
     SAVED = "saved"
+    VIEWED = "viewed"
     REJECTED = "rejected"
     IGNORED = "ignored"
 
@@ -258,3 +259,46 @@ class CacheStatusResponse(BaseModel):
     pending: int
     failed: int
     roles: List[Dict[str, Any]]
+
+
+# ============================================================================
+# PROOFHIRE OPERATIONAL INTEGRATION
+# ============================================================================
+
+class InviteToProofHireRequest(BaseModel):
+    """Request to create/link a ProofHire application for a candidate."""
+    company_id: str = Field(..., description="Company UUID")
+    candidate_id: str = Field(..., description="Agencity candidate UUID")
+    proofhire_role_id: str = Field(..., description="ProofHire role ID")
+    search_id: Optional[str] = Field(None, description="Optional search UUID")
+
+
+class InviteToProofHireResponse(BaseModel):
+    """Response after creating/updating candidate linkage."""
+    linkage_id: str
+    candidate_id: str
+    proofhire_application_id: str
+    proofhire_role_id: str
+    status: str
+
+
+class ProofHireRunWebhookRequest(BaseModel):
+    """Webhook payload from ProofHire when run state changes."""
+    proofhire_application_id: str = Field(..., description="ProofHire application ID")
+    run_id: str = Field(..., description="ProofHire simulation run ID")
+    success: bool = Field(..., description="Whether run completed successfully")
+    proofhire_score: Optional[int] = Field(None, ge=0, le=100, description="Optional score from brief/eval")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Raw webhook payload")
+
+
+class ProofHireRunWebhookResponse(BaseModel):
+    """Acknowledgement response for webhook updates."""
+    status: str
+    linkage_id: Optional[str] = None
+
+
+class DecisionPacketResponse(BaseModel):
+    """Combined packet for founder decisioning across systems."""
+    linkage: LinkageResponse
+    candidate: Dict[str, Any]
+    feedback: List[Dict[str, Any]]
