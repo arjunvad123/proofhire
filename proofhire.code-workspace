@@ -1,0 +1,35 @@
+{
+  "folders": [
+    {
+      "name": "ProofHire Root",
+      "path": "."
+    },
+    {
+      "name": "Agencity Backend",
+      "path": "agencity/app"
+    },
+    {
+      "name": "Agencity Frontend",
+      "path": "agencity/web/src"
+    },
+    {
+      "name": "Scripts & Tests",
+      "path": "agencity/scripts"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:ProofHire Root}/agencity/.venv/bin/python",
+    "python.analysis.extraPaths": [
+      "${workspaceFolder:ProofHire Root}/agencity"
+    ]
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "esbenp.prettier-vscode",
+      "bradlc.vscode-tailwindcss",
+      "eamodio.gitlens"
+    ]
+  }
+}

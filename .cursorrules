@@ -1,0 +1,130 @@
+# ProofHire/Agencity - Cursor AI Rules
+
+## Project Overview
+
+This is a **Network-First Candidate Intelligence Platform** with two main components:
+
+1. **Agencity** (`/agencity`) - AI-powered recruiting intelligence backend
+   - Python FastAPI backend on port 8001
+   - Next.js frontend on port 3000
+   - Uses Claude AI for reasoning
+   - Supabase for database
+
+2. **ProofHire** (`/backend`, `/runner`, `/web`) - Simulation-based candidate evaluation
+   - FastAPI backend
+   - Docker-based simulation runner
+
+## Tech Stack
+
+### Backend (Agencity)
+- **Framework**: FastAPI (Python 3.11+)
+- **Database**: Supabase (PostgreSQL)
+- **AI**: Claude API (Anthropic), OpenAI, Perplexity
+- **Vector DB**: Pinecone
+- **External APIs**: People Data Labs, Clado AI, GitHub
+
+### Frontend (Agencity Web)
+- **Framework**: Next.js 14 (App Router)
+- **Styling**: Tailwind CSS
+- **State**: React hooks + localStorage
+
+## Key Directories
+
+```
+proofhire/
+├── agencity/                    # Main intelligence platform
+│   ├── app/                     # FastAPI backend
+│   │   ├── api/routes/          # API endpoints
+│   │   ├── services/            # Business logic
+│   │   │   ├── reasoning/       # Claude AI reasoning
+│   │   │   ├── prediction/      # 6 prediction engines
+│   │   │   ├── rl/              # Reinforcement learning
+│   │   │   └── feedback/        # Feedback collection
+│   │   ├── intelligence/        # Timing, expansion, activation
+│   │   └── search/              # Search engines V1-V5
+│   ├── web/                     # Next.js frontend
+│   │   └── src/
+│   │       ├── app/dashboard/   # Dashboard pages
+│   │       ├── components/      # React components
+│   │       └── lib/api.ts       # API client
+│   └── scripts/                 # Utility scripts
+├── backend/                     # ProofHire backend
+├── runner/                      # Simulation runner
+└── web/                         # ProofHire web app
+```
+
+## Coding Standards
+
+### Python
+- Use type hints for all functions
+- Use Pydantic for data models
+- Async/await for all I/O operations
+- Use `logger` not `print` for debugging
+- Follow existing patterns in the codebase
+
+### TypeScript/React
+- Use functional components with hooks
+- Use TypeScript interfaces for props
+- Follow existing component patterns
+- Use Tailwind for styling
+
+### API Design
+- REST endpoints follow `/api/{resource}/{action}` pattern
+- Use Pydantic models for request/response validation
+- Return proper HTTP status codes
+
+## Important Files
+
+### Configuration
+- `agencity/.env` - Backend environment variables
+- `agencity/app/config.py` - Settings loader
+- `agencity/web/.env.local` - Frontend environment
+
+### Key Services
+- `agencity/app/services/master_orchestrator.py` - Unified entry point
+- `agencity/app/services/reasoning/claude_engine.py` - Claude AI integration
+- `agencity/app/services/curation_engine.py` - Candidate curation
+- `agencity/app/api/routes/integration.py` - Pipeline APIs
+
+### Demo Data
+- Company ID: `100b5ac1-1912-4970-a378-04d0169fd597` (Confido)
+- Network: 3,637 candidates
+
+## Common Tasks
+
+### Start Development
+```bash
+# Backend
+cd agencity && source .venv/bin/activate && uvicorn app.main:app --reload --port 8001
+
+# Frontend
+cd agencity/web && npm run dev
+```
+
+### Run Tests
+```bash
+cd agencity && pytest tests/ -v
+```
+
+### API Documentation
+http://localhost:8001/docs
+
+## AI Assistance Guidelines
+
+When helping with this codebase:
+1. Check existing patterns before suggesting new approaches
+2. Use the existing service structure (don't create new files unless necessary)
+3. Maintain backwards compatibility with existing APIs
+4. Keep Claude API usage efficient (batch when possible)
+5. Follow the tiered search pattern: Network > Warm > Cold
+6. Use proper error handling and logging
+
+## Database Schema (Supabase)
+
+Key tables:
+- `companies` - Company profiles
+- `people` - Candidate profiles
+- `person_enrichments` - Enrichment data
+- `candidate_linkages` - Pipeline tracking
+- `feedback_actions` - User feedback for RL
+- `curation_cache` - Cached curation results
