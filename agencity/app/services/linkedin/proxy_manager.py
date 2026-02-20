@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 # Decodo (formerly SmartProxy) residential endpoints
 # Note: Endpoints remain the same after rebrand - no setup changes needed
+# Port 7000 is standard, but port 10000 works on more networks
 SMARTPROXY_HOST = "gate.smartproxy.com"
-SMARTPROXY_PORT = 7000
+SMARTPROXY_PORT = 10000  # Changed from 7000 - port 10000 has better network compatibility
 
 # BrightData (Luminati) residential endpoints
 BRIGHTDATA_HOST = "brd.superproxy.io"
@@ -247,12 +248,13 @@ class ProxyManager:
             "password": proxy_password,
         }
 
-    async def check_proxy_health(self, proxy: Dict[str, str]) -> Dict[str, any]:
+    async def check_proxy_health(self, proxy: Dict[str, str], retries: int = 3) -> Dict[str, any]:
         """
         Test proxy connectivity and return diagnostic info.
 
         Args:
             proxy: Playwright-format proxy dict {server, username, password}.
+            retries: Number of retry attempts (residential proxies can be flaky).
 
         Returns:
             {"ok": bool, "ip": str|None, "country": str|None, "latency_ms": int|None, "error": str|None}
@@ -268,47 +270,54 @@ class ProxyManager:
         }
 
         # Build proxy URL in format: http://username:password@host:port
-        # For Decodo, password may be empty (API key is in username)
+        # Note: Do NOT URL-encode credentials - httpx handles this internally
         proxy_host = proxy['server'].replace('http://', '').replace('https://', '')
         if proxy.get('password'):
             proxy_url = f"http://{proxy['username']}:{proxy['password']}@{proxy_host}"
         else:
-            # Decodo uses API key in username, no password
-            # httpx requires format: http://username@host:port (no colon if no password)
             proxy_url = f"http://{proxy['username']}@{proxy_host}"
 
-        try:
-            start = time.monotonic()
-            # httpx uses 'proxy' parameter, not 'proxies'
-            async with httpx.AsyncClient(
-                proxy=proxy_url,
-                timeout=15.0,
-            ) as client:
-                resp = await client.get("https://ipinfo.io/json")
-                elapsed = time.monotonic() - start
+        last_error = None
+        for attempt in range(retries):
+            try:
+                start = time.monotonic()
+                # httpx uses 'proxy' parameter, not 'proxies'
+                async with httpx.AsyncClient(
+                    proxy=proxy_url,
+                    timeout=20.0,
+                ) as client:
+                    resp = await client.get("https://ipinfo.io/json")
+                    elapsed = time.monotonic() - start
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    result["ok"] = True
-                    result["ip"] = data.get("ip")
-                    result["country"] = data.get("country")
-                    result["latency_ms"] = int(elapsed * 1000)
-                    logger.info(
-                        "Proxy health OK: ip=%s country=%s latency=%dms",
-                        result["ip"], result["country"], result["latency_ms"],
-                    )
-                else:
-                    result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        except httpx.ConnectTimeout:
-            result["error"] = "Connection timeout - proxy server unreachable or credentials invalid"
-            logger.warning("Proxy health check failed: Connection timeout")
-        except httpx.ProxyError as exc:
-            result["error"] = f"Proxy error: {str(exc)}"
-            logger.warning("Proxy health check failed: Proxy error - %s", exc)
-        except Exception as exc:
-            result["error"] = f"{type(exc).__name__}: {str(exc)}"
-            logger.warning("Proxy health check failed: %s", exc, exc_info=True)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        result["ok"] = True
+                        result["ip"] = data.get("ip")
+                        result["country"] = data.get("country")
+                        result["latency_ms"] = int(elapsed * 1000)
+                        logger.info(
+                            "Proxy health OK: ip=%s country=%s latency=%dms",
+                            result["ip"], result["country"], result["latency_ms"],
+                        )
+                        return result
+                    else:
+                        last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            except httpx.ConnectTimeout:
+                last_error = "Connection timeout - proxy server unreachable or credentials invalid"
+                logger.warning("Proxy health check attempt %d failed: Connection timeout", attempt + 1)
+            except httpx.ProxyError as exc:
+                last_error = f"Proxy error: {str(exc)}"
+                logger.warning("Proxy health check attempt %d failed: Proxy error - %s", attempt + 1, exc)
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {str(exc)}"
+                logger.warning("Proxy health check attempt %d failed: %s", attempt + 1, exc)
 
+            # Wait before retry (residential proxies can be temporarily unavailable)
+            if attempt < retries - 1:
+                import asyncio
+                await asyncio.sleep(1)
+
+        result["error"] = last_error
         return result
 
     def get_available_regions(self) -> List[str]:
@@ -332,10 +341,12 @@ class ProxyManager:
         Decodo uses username/password authentication.
 
         Username format:
-            user-{base_username}-country-{cc}[-state-{st}][-session-{id}]
+            user-{base_username}-country-{cc}[-session-{id}]
+
+        Note: State-level targeting (-state-XX) requires a premium plan.
+        Session IDs are supported for sticky sessions.
 
         Docs: https://decodo.com (formerly smartproxy.com)
-        Note: No setup changes needed after rebrand - endpoints and auth remain the same
         """
         # Decodo uses username as the base identifier
         if not self.username:
@@ -344,8 +355,10 @@ class ProxyManager:
 
         parts = [base, f"country-{country}"]
 
-        if us_state:
-            parts.append(f"state-{us_state}")
+        # Note: State-level targeting disabled - requires premium Decodo plan
+        # If you have a premium plan, uncomment the following:
+        # if us_state:
+        #     parts.append(f"state-{us_state}")
 
         if sticky_session_id:
             # Deterministic 8-char session key derived from the user's ID
