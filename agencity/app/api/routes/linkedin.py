@@ -16,6 +16,7 @@ from app.services.linkedin.session_manager import LinkedInSessionManager
 from app.services.linkedin.credential_auth import LinkedInCredentialAuth
 from app.services.linkedin.encryption import CookieEncryption
 from app.services.linkedin.extraction_task import run_extraction_sync
+from app.services.linkedin.proxy_manager import ProxyManager
 
 
 router = APIRouter(prefix="/api/v1/linkedin", tags=["linkedin"])

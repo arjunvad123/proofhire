@@ -8,6 +8,8 @@ Implements realistic human-like patterns:
 - Profile viewing with variable dwell time
 - Session management with breaks
 - Click-before-type pattern (move mouse → click field → type)
+- Idle/distraction patterns (phone checks, thinking pauses, mini-breaks)
+- Warmup mode for new accounts (slower start, ramping up)
 """
 
 import math
@@ -16,9 +18,319 @@ import asyncio
 import logging
 from typing import Optional, Tuple, List
 from datetime import datetime
+from dataclasses import dataclass
+from enum import Enum
 from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Extraction Configuration Presets
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExtractionMode(Enum):
+    """Extraction speed/safety presets."""
+    CAUTIOUS = "cautious"  # For new accounts - 2x slower, more idle pauses
+    NORMAL = "normal"      # For established accounts
+
+
+@dataclass
+class ExtractionConfig:
+    """
+    Configuration for connection extraction behavior.
+
+    Presets balance extraction speed vs. detection risk.
+    """
+    scroll_delay_min: float
+    scroll_delay_max: float
+    read_pause_min: float
+    read_pause_max: float
+    warmup_connections: int
+    idle_frequency_multiplier: float
+    back_scroll_chance: float
+    card_inspection_chance: float
+
+    @classmethod
+    def cautious(cls) -> "ExtractionConfig":
+        """For new accounts - extra careful, much slower."""
+        return cls(
+            scroll_delay_min=3.5,
+            scroll_delay_max=8.0,
+            read_pause_min=2.0,
+            read_pause_max=5.0,
+            warmup_connections=20,
+            idle_frequency_multiplier=1.5,
+            back_scroll_chance=0.25,
+            card_inspection_chance=0.12,
+        )
+
+    @classmethod
+    def normal(cls) -> "ExtractionConfig":
+        """For established accounts - faster but still human-like."""
+        return cls(
+            scroll_delay_min=3.0,
+            scroll_delay_max=7.0,
+            read_pause_min=1.5,
+            read_pause_max=4.5,
+            warmup_connections=10,
+            idle_frequency_multiplier=1.0,
+            back_scroll_chance=0.20,
+            card_inspection_chance=0.10,
+        )
+
+    @classmethod
+    def from_mode(cls, mode: ExtractionMode) -> "ExtractionConfig":
+        """Get config for a given mode."""
+        if mode == ExtractionMode.CAUTIOUS:
+            return cls.cautious()
+        return cls.normal()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Idle Pattern Generator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class IdlePatternGenerator:
+    """
+    Generates realistic idle/distraction patterns that mimic real user behavior.
+
+    Real users don't maintain constant attention:
+    - Check phone (5-15s pause)
+    - Think about something (3-8s pause)
+    - Re-read content (scroll back, pause)
+    - Get distracted mid-session (30-60s pause)
+    - Occasional longer break (2-5 min within session)
+    """
+
+    # Probability weights for different idle behaviors (per scroll cycle)
+    PHONE_CHECK_CHANCE = 0.08        # 8% chance per scroll cycle
+    THINKING_PAUSE_CHANCE = 0.12     # 12% chance
+    DISTRACTION_CHANCE = 0.03        # 3% chance for longer distraction
+    MINI_BREAK_CHANCE = 0.02         # 2% chance for 2-5 min break
+
+    def __init__(self, frequency_multiplier: float = 1.0):
+        """
+        Initialize idle pattern generator.
+
+        Args:
+            frequency_multiplier: Scale idle event frequency (1.5 = 50% more frequent)
+        """
+        self.frequency_multiplier = frequency_multiplier
+        self.session_start_time: Optional[datetime] = None
+        self.connections_processed = 0
+
+    def start_session(self) -> None:
+        """Mark the start of an extraction session."""
+        self.session_start_time = datetime.now()
+        self.connections_processed = 0
+
+    def record_connection(self) -> None:
+        """Record that a connection was processed."""
+        self.connections_processed += 1
+
+    def get_warmup_multiplier(self, minutes_active: Optional[float] = None) -> float:
+        """
+        New accounts/sessions should start slower and ramp up.
+
+        First 5 min: 2x delays (very cautious)
+        5-15 min: 1.5x delays
+        15-30 min: 1.2x delays
+        30+ min: normal (1x)
+
+        Args:
+            minutes_active: Override for testing. If None, uses actual session time.
+
+        Returns:
+            Multiplier for delays (higher = slower)
+        """
+        if minutes_active is None:
+            if self.session_start_time is None:
+                return 2.0  # Not started yet, be very cautious
+            elapsed = (datetime.now() - self.session_start_time).total_seconds() / 60
+        else:
+            elapsed = minutes_active
+
+        if elapsed < 5:
+            return 2.0
+        elif elapsed < 15:
+            return 1.5
+        elif elapsed < 30:
+            return 1.2
+        else:
+            return 1.0
+
+    def get_warmup_multiplier_by_count(self, warmup_threshold: int) -> float:
+        """
+        Alternative warmup based on connection count.
+
+        First N connections are slower regardless of time.
+
+        Args:
+            warmup_threshold: Number of connections for warmup period
+
+        Returns:
+            Multiplier for delays
+        """
+        if self.connections_processed < warmup_threshold // 4:
+            return 2.0  # First 25% of warmup: very slow
+        elif self.connections_processed < warmup_threshold // 2:
+            return 1.5  # Next 25%: slower
+        elif self.connections_processed < warmup_threshold:
+            return 1.2  # Last 50%: slightly slow
+        else:
+            return 1.0  # Normal speed
+
+    def _should_trigger(self, base_chance: float) -> bool:
+        """Check if an idle event should trigger, accounting for frequency multiplier."""
+        return random.random() < (base_chance * self.frequency_multiplier)
+
+    async def maybe_phone_check(self, page: Page) -> bool:
+        """
+        8% chance: pause 5-15s, maybe move mouse away from content.
+
+        Simulates user briefly checking their phone.
+
+        Returns:
+            True if a phone check occurred
+        """
+        if not self._should_trigger(self.PHONE_CHECK_CHANCE):
+            return False
+
+        logger.debug("Idle: simulating phone check")
+
+        # Optionally move mouse to edge of screen (looking away)
+        if random.random() < 0.4:
+            try:
+                cursor = GhostCursor(page)
+                # Move to corner/edge of viewport
+                viewport = page.viewport_size
+                if viewport:
+                    edge_x = random.choice([10, viewport['width'] - 10])
+                    edge_y = random.randint(100, viewport['height'] - 100)
+                    await cursor.move_to(edge_x, edge_y)
+            except Exception:
+                pass  # Non-critical
+
+        # Pause for phone check duration
+        pause_duration = random.uniform(5.0, 15.0)
+        await asyncio.sleep(pause_duration)
+        return True
+
+    async def maybe_thinking_pause(self) -> bool:
+        """
+        12% chance: pause 3-8s (user thinking about what they see).
+
+        Returns:
+            True if a thinking pause occurred
+        """
+        if not self._should_trigger(self.THINKING_PAUSE_CHANCE):
+            return False
+
+        logger.debug("Idle: simulating thinking pause")
+        pause_duration = random.uniform(3.0, 8.0)
+        await asyncio.sleep(pause_duration)
+        return True
+
+    async def maybe_distraction(self) -> bool:
+        """
+        3% chance: longer pause 30-60s (got distracted by something).
+
+        Returns:
+            True if a distraction occurred
+        """
+        if not self._should_trigger(self.DISTRACTION_CHANCE):
+            return False
+
+        logger.debug("Idle: simulating distraction (30-60s)")
+        pause_duration = random.uniform(30.0, 60.0)
+        await asyncio.sleep(pause_duration)
+        return True
+
+    async def maybe_mini_break(self) -> bool:
+        """
+        2% chance: 2-5 minute break (bathroom, coffee, etc).
+
+        Returns:
+            True if a mini break occurred
+        """
+        if not self._should_trigger(self.MINI_BREAK_CHANCE):
+            return False
+
+        logger.info("Idle: taking mini break (2-5 min)")
+        pause_duration = random.uniform(120.0, 300.0)  # 2-5 minutes
+        await asyncio.sleep(pause_duration)
+        return True
+
+    async def run_idle_check(self, page: Page) -> str:
+        """
+        Run through all idle checks in priority order.
+
+        Only one idle event triggers per check (mini break takes priority).
+
+        Args:
+            page: Playwright page for mouse movements
+
+        Returns:
+            Name of the idle event that occurred, or "none"
+        """
+        # Check in priority order (longest first)
+        if await self.maybe_mini_break():
+            return "mini_break"
+        if await self.maybe_distraction():
+            return "distraction"
+        if await self.maybe_phone_check(page):
+            return "phone_check"
+        if await self.maybe_thinking_pause():
+            return "thinking_pause"
+        return "none"
+
+    async def inspect_random_card(self, page: Page, card_selector: str = '[componentkey^="auto-component-"]') -> bool:
+        """
+        Hover over a visible connection card briefly without clicking.
+
+        Simulates user considering whether to click on someone's profile.
+
+        Args:
+            page: Playwright page
+            card_selector: CSS selector for connection cards
+
+        Returns:
+            True if a card was inspected
+        """
+        try:
+            cards = await page.locator(card_selector).all()
+            if not cards:
+                return False
+
+            # Pick a random visible card
+            card = random.choice(cards)
+            box = await card.bounding_box()
+            if not box:
+                return False
+
+            # Check if card is in viewport
+            viewport = page.viewport_size
+            if not viewport:
+                return False
+            if box['y'] < 0 or box['y'] > viewport['height']:
+                return False
+
+            logger.debug("Idle: inspecting random card (hover)")
+
+            # Move cursor to card
+            cursor = GhostCursor(page)
+            target_x = box['x'] + box['width'] * random.uniform(0.3, 0.7)
+            target_y = box['y'] + box['height'] * random.uniform(0.3, 0.7)
+            await cursor.move_to(target_x, target_y)
+
+            # Hover duration (considering the profile)
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+
+            return True
+        except Exception as e:
+            logger.debug(f"Card inspection failed: {e}")
+            return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +454,92 @@ class GhostCursor:
                 delta += direction * remainder
             await self._page.mouse.wheel(0, delta)
             await asyncio.sleep(dt)
+
+    async def scroll_with_momentum(self, target_distance: int) -> None:
+        """
+        Scroll with realistic momentum pattern.
+
+        Mimics natural scrolling:
+        1. Start slow (finger/wrist building up)
+        2. Speed up in middle (fluid motion)
+        3. Slow down at end (deceleration/stopping)
+
+        Adds variable scroll segment sizes to avoid detection of
+        perfectly uniform scroll increments.
+
+        Args:
+            target_distance: Total pixels to scroll (positive = down)
+        """
+        if target_distance == 0:
+            return
+
+        direction = 1 if target_distance > 0 else -1
+        remaining = abs(target_distance)
+
+        # Divide into 4-8 segments with momentum curve
+        num_segments = random.randint(4, 8)
+        segment_base = remaining / num_segments
+
+        # Generate momentum weights: slow → fast → slow
+        # Using sine curve for natural acceleration/deceleration
+        weights = []
+        for i in range(num_segments):
+            # 0 to pi gives: 0 → 1 → 0 (sine curve)
+            t = (i + 0.5) / num_segments * math.pi
+            weight = 0.3 + 0.7 * math.sin(t)  # Range: 0.3 to 1.0
+            weights.append(weight)
+
+        # Normalize weights
+        total_weight = sum(weights)
+        weights = [w / total_weight for w in weights]
+
+        for i, weight in enumerate(weights):
+            # Calculate segment distance with some randomness
+            segment_distance = int(remaining * weight * random.uniform(0.85, 1.15))
+            segment_distance = max(50, min(segment_distance, remaining))
+
+            # Scroll this segment
+            await self._page.mouse.wheel(0, direction * segment_distance)
+            remaining -= segment_distance
+
+            if remaining <= 0:
+                break
+
+            # Delay between segments (shorter in middle, longer at start/end)
+            if i < num_segments // 3:
+                # Starting: longer pauses
+                delay = random.uniform(0.12, 0.25)
+            elif i > 2 * num_segments // 3:
+                # Ending: longer pauses
+                delay = random.uniform(0.15, 0.30)
+            else:
+                # Middle: quick, fluid
+                delay = random.uniform(0.05, 0.12)
+
+            await asyncio.sleep(delay)
+
+        # Handle any remaining distance
+        if remaining > 0:
+            await self._page.mouse.wheel(0, direction * remaining)
+
+    async def reading_scan(self, page_height: int = 400) -> None:
+        """
+        Simulate small jittery movements while "reading" content.
+
+        Real users don't hold the mouse perfectly still - there are
+        micro-movements as they scan text with their eyes.
+
+        Args:
+            page_height: Approximate height of content being read
+        """
+        # Small scroll jitters (1-3 micro-scrolls)
+        num_jitters = random.randint(1, 3)
+        for _ in range(num_jitters):
+            # Very small scroll (reading adjustment)
+            jitter_distance = random.randint(-30, 50)
+            if jitter_distance != 0:
+                await self._page.mouse.wheel(0, jitter_distance)
+            await asyncio.sleep(random.uniform(0.8, 2.5))
 
     # ── Bezier path generation ──────────────────────────────────────────
 

@@ -10,9 +10,8 @@ Handles:
 
 Proxy credentials are read from environment variables via app.config:
     PROXY_PROVIDER   — "smartproxy" (Decodo) or "brightdata"
-    PROXY_API_KEY    — Decodo API key (optional, alternative to username/password)
-    PROXY_USERNAME   — base username from the provider dashboard
-    PROXY_PASSWORD   — password from the provider dashboard
+    PROXY_USERNAME   — Username for proxy authentication
+    PROXY_PASSWORD   — Password for proxy authentication
 """
 
 import hashlib
@@ -134,7 +133,6 @@ class ProxyManager:
     def __init__(self):
         """Initialize proxy manager from settings."""
         self.provider: str = (settings.proxy_provider or "").strip().lower()
-        self.api_key: str = (settings.proxy_api_key or "").strip()
         self.username: str = (settings.proxy_username or "").strip()
         self.password: str = (settings.proxy_password or "").strip()
 
@@ -145,11 +143,13 @@ class ProxyManager:
     @property
     def is_configured(self) -> bool:
         """Return True if proxy credentials are present."""
-        # SmartProxy can use either API key OR username/password
+        if not self.provider:
+            return False
+        # Decodo (SmartProxy) uses username/password authentication
         if self.provider == "smartproxy":
-            return bool(self.api_key or (self.username and self.password))
+            return bool(self.username and self.password)
         # BrightData requires username/password
-        return bool(self.provider and self.username and self.password)
+        return bool(self.username and self.password)
 
     def get_proxy_for_location(
         self,
@@ -182,8 +182,8 @@ class ProxyManager:
         if self.provider == "smartproxy":
             full_username = self._smartproxy_username(country, us_state, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
-            # If using API key, password can be empty or use API key as password
-            proxy_password = self.api_key if self.api_key else self.password
+            # Decodo uses username/password authentication
+            proxy_password = self.password
         elif self.provider == "brightdata":
             full_username = self._brightdata_username(country, us_state, sticky_session_id)
             server = f"http://{BRIGHTDATA_HOST}:{BRIGHTDATA_PORT}"
@@ -192,7 +192,7 @@ class ProxyManager:
             logger.warning(f"Unknown proxy provider '{self.provider}', falling back to smartproxy format")
             full_username = self._smartproxy_username(country, us_state, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
-            proxy_password = self.api_key if self.api_key else self.password
+            proxy_password = self.password
 
         proxy = {
             "server": server,
@@ -230,7 +230,8 @@ class ProxyManager:
         if self.provider == "smartproxy":
             full_username = self._smartproxy_username(proxy_location, None, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
-            proxy_password = self.api_key if self.api_key else self.password
+            # Decodo uses username/password authentication
+            proxy_password = self.password
         elif self.provider == "brightdata":
             full_username = self._brightdata_username(proxy_location, None, sticky_session_id)
             server = f"http://{BRIGHTDATA_HOST}:{BRIGHTDATA_PORT}"
@@ -266,15 +267,21 @@ class ProxyManager:
             "error": None,
         }
 
-        proxy_url = (
-            f"http://{proxy['username']}:{proxy['password']}"
-            f"@{proxy['server'].replace('http://', '')}"
-        )
+        # Build proxy URL in format: http://username:password@host:port
+        # For Decodo, password may be empty (API key is in username)
+        proxy_host = proxy['server'].replace('http://', '').replace('https://', '')
+        if proxy.get('password'):
+            proxy_url = f"http://{proxy['username']}:{proxy['password']}@{proxy_host}"
+        else:
+            # Decodo uses API key in username, no password
+            # httpx requires format: http://username@host:port (no colon if no password)
+            proxy_url = f"http://{proxy['username']}@{proxy_host}"
 
         try:
             start = time.monotonic()
+            # httpx uses 'proxy' parameter, not 'proxies'
             async with httpx.AsyncClient(
-                proxies={"http://": proxy_url, "https://": proxy_url},
+                proxy=proxy_url,
                 timeout=15.0,
             ) as client:
                 resp = await client.get("https://ipinfo.io/json")
@@ -291,10 +298,16 @@ class ProxyManager:
                         result["ip"], result["country"], result["latency_ms"],
                     )
                 else:
-                    result["error"] = f"HTTP {resp.status_code}"
+                    result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        except httpx.ConnectTimeout:
+            result["error"] = "Connection timeout - proxy server unreachable or credentials invalid"
+            logger.warning("Proxy health check failed: Connection timeout")
+        except httpx.ProxyError as exc:
+            result["error"] = f"Proxy error: {str(exc)}"
+            logger.warning("Proxy health check failed: Proxy error - %s", exc)
         except Exception as exc:
-            result["error"] = str(exc)
-            logger.warning("Proxy health check failed: %s", exc)
+            result["error"] = f"{type(exc).__name__}: {str(exc)}"
+            logger.warning("Proxy health check failed: %s", exc, exc_info=True)
 
         return result
 
@@ -316,24 +329,18 @@ class ProxyManager:
         """
         Build Decodo (formerly SmartProxy) username with geo-targeting and sticky session.
 
-        Decodo supports two authentication methods:
-        1. API Key: Use API key directly (if provided)
-        2. Username/Password: Build username with parameters
+        Decodo uses username/password authentication.
 
-        Username format (when using username/password):
+        Username format:
             user-{base_username}-country-{cc}[-state-{st}][-session-{id}]
-
-        API Key format (when using API key):
-            {api_key}-country-{cc}[-state-{st}][-session-{id}]
 
         Docs: https://decodo.com (formerly smartproxy.com)
         Note: No setup changes needed after rebrand - endpoints and auth remain the same
         """
-        # If API key is provided, use it as the base identifier
-        if self.api_key:
-            base = self.api_key
-        else:
-            base = f"user-{self.username}"
+        # Decodo uses username as the base identifier
+        if not self.username:
+            raise ValueError("Decodo requires PROXY_USERNAME to be set")
+        base = f"user-{self.username}"
 
         parts = [base, f"country-{country}"]
 

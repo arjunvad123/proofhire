@@ -7,18 +7,29 @@ Implements Comet-style extraction with human-like behavior:
 - Realistic reading patterns
 - Respects rate limits
 - Session management
+- Idle/distraction patterns (phone checks, thinking pauses)
+- Warmup mode for new accounts
+- Card inspection simulation
 
 Uses StealthBrowser for context-level stealth + extra evasion scripts.
 """
 
 import asyncio
+import os
 import random
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from playwright.async_api import Page, BrowserContext
 
-from .human_behavior import HumanBehaviorEngine, GhostCursor, GhostCursorIntegration
+from .human_behavior import (
+    HumanBehaviorEngine,
+    GhostCursor,
+    GhostCursorIntegration,
+    IdlePatternGenerator,
+    ExtractionConfig,
+    ExtractionMode,
+)
 from .session_manager import LinkedInSessionManager
 from .stealth_browser import StealthBrowser
 from .warning_detection import check_and_handle_warnings
@@ -32,23 +43,62 @@ class LinkedInConnectionExtractor:
     # LinkedIn loads approximately 50 connections per scroll
     CONNECTIONS_PER_SCROLL = 50
 
-    # Scroll delays (seconds) - intentionally slow and methodical
-    MIN_SCROLL_DELAY = 2.5
-    MAX_SCROLL_DELAY = 5.0
+    # Default scroll delays (seconds) - hardened values
+    # These are overridden by ExtractionConfig when in cautious mode
+    MIN_SCROLL_DELAY = 3.0
+    MAX_SCROLL_DELAY = 7.0
 
     # Reading pause - simulate actually looking at connections
-    MIN_READ_PAUSE = 1.0
-    MAX_READ_PAUSE = 3.0
+    MIN_READ_PAUSE = 1.5
+    MAX_READ_PAUSE = 4.5
 
-    def __init__(self, session_manager: LinkedInSessionManager):
+    # Back-scroll chance (increased from 15% to 20-25%)
+    BACK_SCROLL_CHANCE = 0.22
+
+    # Card inspection chance
+    CARD_INSPECTION_CHANCE = 0.10
+
+    def __init__(
+        self,
+        session_manager: LinkedInSessionManager,
+        cautious_mode: bool = False,
+    ):
         """
         Initialize extractor.
 
         Args:
             session_manager: Session manager for cookie handling
+            cautious_mode: Use extra-safe timing for new accounts
         """
         self.session_manager = session_manager
         self.behavior = HumanBehaviorEngine()
+
+        # Determine extraction mode from parameter or environment
+        env_cautious = os.environ.get('LINKEDIN_CAUTIOUS_MODE', '').lower() in ('1', 'true', 'yes')
+        self.cautious_mode = cautious_mode or env_cautious
+
+        # Load appropriate configuration
+        mode = ExtractionMode.CAUTIOUS if self.cautious_mode else ExtractionMode.NORMAL
+        self.config = ExtractionConfig.from_mode(mode)
+
+        # Initialize idle pattern generator
+        self.idle_generator = IdlePatternGenerator(
+            frequency_multiplier=self.config.idle_frequency_multiplier
+        )
+
+        # Apply config values to instance
+        self.MIN_SCROLL_DELAY = self.config.scroll_delay_min
+        self.MAX_SCROLL_DELAY = self.config.scroll_delay_max
+        self.MIN_READ_PAUSE = self.config.read_pause_min
+        self.MAX_READ_PAUSE = self.config.read_pause_max
+        self.BACK_SCROLL_CHANCE = self.config.back_scroll_chance
+        self.CARD_INSPECTION_CHANCE = self.config.card_inspection_chance
+
+        logger.info(
+            f"Extractor initialized: mode={'CAUTIOUS' if self.cautious_mode else 'NORMAL'}, "
+            f"scroll_delay={self.MIN_SCROLL_DELAY}-{self.MAX_SCROLL_DELAY}s, "
+            f"warmup_connections={self.config.warmup_connections}"
+        )
 
     async def extract_connections(
         self,
@@ -323,6 +373,9 @@ class LinkedInConnectionExtractor:
         - Waits for new content after each scroll
         - Handles LinkedIn's lazy loading
         - Natural scrolling with ghost cursor
+        - Idle patterns (phone checks, thinking, distractions)
+        - Warmup period for new accounts
+        - Card inspection simulation
 
         Args:
             page: Playwright page
@@ -335,6 +388,9 @@ class LinkedInConnectionExtractor:
         connections = []
         seen_urls = set()
         no_new_count = 0
+
+        # Start idle pattern tracking
+        self.idle_generator.start_session()
 
         # Try to get total connection count from page
         total_count = await self._get_total_connection_count(page)
@@ -364,6 +420,7 @@ class LinkedInConnectionExtractor:
                     connections.append(conn)
                     seen_urls.add(url)
                     new_connections += 1
+                    self.idle_generator.record_connection()
 
             # Progress callback with estimated total
             if progress_callback:
@@ -384,10 +441,28 @@ class LinkedInConnectionExtractor:
             else:
                 no_new_count = 0
 
+            # Calculate warmup multiplier (slower at start of session)
+            warmup_mult = self.idle_generator.get_warmup_multiplier_by_count(
+                self.config.warmup_connections
+            )
+
             # Simulate reading the visible connections before scrolling
             # A real user spends time looking at names/titles
             reading_time = random.uniform(self.MIN_READ_PAUSE, self.MAX_READ_PAUSE)
+            reading_time *= warmup_mult
             await asyncio.sleep(reading_time)
+
+            # ── Idle pattern checks ──
+            # Run idle checks (phone, thinking, distraction, mini-break)
+            idle_event = await self.idle_generator.run_idle_check(page)
+            if idle_event != "none":
+                logger.info(f"Idle event occurred: {idle_event}")
+
+            # Card inspection simulation (hover without click)
+            if random.random() < self.CARD_INSPECTION_CHANCE:
+                inspected = await self.idle_generator.inspect_random_card(page)
+                if inspected:
+                    logger.debug("Inspected random connection card")
 
             # Scroll down with human-like behavior (multiple small scrolls)
             await self._scroll_connections_page(page)
@@ -395,20 +470,23 @@ class LinkedInConnectionExtractor:
             # Wait for new content to load (LinkedIn lazy loads)
             await self._wait_for_new_content(page, len(seen_urls))
 
-            # Human-like delay between scroll sessions
+            # Human-like delay between scroll sessions (with warmup multiplier)
             delay = random.uniform(self.MIN_SCROLL_DELAY, self.MAX_SCROLL_DELAY)
+            delay *= warmup_mult
             await asyncio.sleep(delay)
 
-            # Occasional variation: scroll back up slightly (re-reading) — 15%
-            if random.random() < 0.15:
+            # Occasional variation: scroll back up slightly (re-reading)
+            # Increased from 15% to configurable (20-25%)
+            if random.random() < self.BACK_SCROLL_CHANCE:
                 cursor = GhostCursor(page)
-                await cursor.scroll(random.randint(-150, -250))
-                await asyncio.sleep(random.uniform(1.0, 2.5))
+                # Variable scroll-back distance
+                back_distance = random.randint(-150, -350)
+                await cursor.scroll(back_distance)
+                await asyncio.sleep(random.uniform(1.5, 3.5))
 
-            # Occasional longer pause (checking phone, thinking) — 5%
-            if random.random() < 0.05:
-                logger.debug("Taking a brief pause (simulating distraction)")
-                await asyncio.sleep(random.uniform(5.0, 10.0))
+                # Sometimes do a small "reading scan" after scrolling back
+                if random.random() < 0.3:
+                    await cursor.reading_scan()
 
         logger.info(f"Extraction complete: {len(connections)} connections found")
         return connections
@@ -735,21 +813,34 @@ class LinkedInConnectionExtractor:
 
         Uses multiple small scrolls instead of one big jump to appear more natural.
         A real user scrolls in increments, pausing to read.
+
+        Randomly alternates between:
+        - Standard incremental scrolling
+        - Momentum-based scrolling (more natural physics)
         """
         cursor = GhostCursor(page)
 
-        # Break the scroll into 2-4 smaller increments
-        num_scrolls = random.randint(2, 4)
-        total_distance = random.randint(600, 900)  # Smaller total distance
-        distance_per_scroll = total_distance // num_scrolls
+        # 40% chance to use momentum-based scrolling
+        use_momentum = random.random() < 0.40
 
-        for i in range(num_scrolls):
-            # Each small scroll
-            await cursor.scroll(distance_per_scroll + random.randint(-50, 50))
+        if use_momentum:
+            # Use momentum-based scroll with natural acceleration/deceleration
+            total_distance = random.randint(500, 800)
+            await cursor.scroll_with_momentum(total_distance)
+        else:
+            # Standard incremental scrolling
+            # Break the scroll into 2-4 smaller increments
+            num_scrolls = random.randint(2, 4)
+            total_distance = random.randint(500, 800)
+            distance_per_scroll = total_distance // num_scrolls
 
-            # Brief pause between small scrolls (simulating reading)
-            if i < num_scrolls - 1:
-                await asyncio.sleep(random.uniform(self.MIN_READ_PAUSE, self.MAX_READ_PAUSE))
+            for i in range(num_scrolls):
+                # Each small scroll
+                await cursor.scroll(distance_per_scroll + random.randint(-50, 50))
+
+                # Brief pause between small scrolls (simulating reading)
+                if i < num_scrolls - 1:
+                    await asyncio.sleep(random.uniform(self.MIN_READ_PAUSE, self.MAX_READ_PAUSE))
 
     async def _is_logged_in(self, page: Page) -> bool:
         """Check if user is logged in (not redirected to login/checkpoint)."""

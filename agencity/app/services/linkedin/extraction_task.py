@@ -2,10 +2,15 @@
 Background task for LinkedIn connection extraction.
 
 Runs the extraction job asynchronously and stores results in the database.
+
+Supports cautious mode for new accounts via:
+- LINKEDIN_CAUTIOUS_MODE environment variable
+- cautious_mode parameter to run_connection_extraction()
 """
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from supabase import Client
@@ -19,7 +24,8 @@ logger = logging.getLogger(__name__)
 async def run_connection_extraction(
     job_id: str,
     session_id: str,
-    supabase: Client
+    supabase: Client,
+    cautious_mode: Optional[bool] = None
 ) -> None:
     """
     Background task to extract LinkedIn connections.
@@ -28,9 +34,17 @@ async def run_connection_extraction(
         job_id: Extraction job UUID
         session_id: LinkedIn session UUID
         supabase: Supabase client
+        cautious_mode: Use cautious mode (2x slower, more idle pauses).
+                      If None, reads from LINKEDIN_CAUTIOUS_MODE env var.
     """
+    # Determine cautious mode from parameter or environment
+    if cautious_mode is None:
+        cautious_mode = os.environ.get('LINKEDIN_CAUTIOUS_MODE', '').lower() in ('1', 'true', 'yes')
+
     session_manager = LinkedInSessionManager(supabase)
-    extractor = LinkedInConnectionExtractor(session_manager)
+    extractor = LinkedInConnectionExtractor(session_manager, cautious_mode=cautious_mode)
+
+    logger.info(f"Starting extraction job {job_id}, cautious_mode={cautious_mode}")
 
     try:
         # Debug: verify we can get cookies
@@ -172,11 +186,22 @@ async def _store_connections(
     return stored
 
 
-def run_extraction_sync(job_id: str, session_id: str, supabase: Client) -> None:
+def run_extraction_sync(
+    job_id: str,
+    session_id: str,
+    supabase: Client,
+    cautious_mode: Optional[bool] = None
+) -> None:
     """
     Synchronous wrapper for running extraction in a background thread.
 
     FastAPI's BackgroundTasks expects a sync function, so this wraps
     the async extraction in an event loop.
+
+    Args:
+        job_id: Extraction job UUID
+        session_id: LinkedIn session UUID
+        supabase: Supabase client
+        cautious_mode: Use cautious mode (2x slower). If None, reads from env.
     """
-    asyncio.run(run_connection_extraction(job_id, session_id, supabase))
+    asyncio.run(run_connection_extraction(job_id, session_id, supabase, cautious_mode))

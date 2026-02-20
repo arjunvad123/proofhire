@@ -2,16 +2,22 @@
 """
 Test LinkedIn connection extraction using cached cookies.
 
-Uses the cookie cache from .linkedin_test_cache.json (created by
-scripts/save_test_auth.py) to avoid login and 2FA.
+Uses per-account cookie cache files (created by scripts/save_test_auth.py)
+to avoid login and 2FA. Each account gets its own isolated browser profile.
 
 If cookies are stale and LinkedIn shows "Welcome Back",
 uses the adaptive login flow to re-authenticate.
 
 Usage:
-    python test_extraction_cached.py
+    python test_extraction_cached.py [--cautious] [--email EMAIL]
+
+Options:
+    --cautious    Use cautious mode (2x slower, more idle pauses) for new accounts
+    --email       LinkedIn account email (uses LINKEDIN_TEST_EMAIL env var if not provided)
+    --clear       Clear the browser profile before running (fresh start)
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -24,20 +30,61 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.services.linkedin.stealth_browser import StealthBrowser
-from app.services.linkedin.human_behavior import GhostCursor
+from app.services.linkedin.human_behavior import GhostCursor, ExtractionMode
 from app.services.linkedin.credential_auth import LinkedInCredentialAuth, LoginState
+from app.services.linkedin.account_manager import AccountManager
 
-CACHE_PATH = Path(__file__).parent / ".linkedin_test_cache.json"
+# Legacy cache path for backwards compatibility
+LEGACY_CACHE_PATH = Path(__file__).parent / ".linkedin_test_cache.json"
 
 
-def load_cookies() -> list:
+def get_cache_path(email: str) -> Path:
+    """Get the cache file path for a specific account."""
+    profile_id = AccountManager.get_profile_id(email)
+    return Path(__file__).parent / f".linkedin_cache_{profile_id}.json"
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Test LinkedIn connection extraction with cached cookies"
+    )
+    parser.add_argument(
+        "--cautious",
+        action="store_true",
+        help="Use cautious mode (2x slower, more idle pauses) for new accounts"
+    )
+    parser.add_argument(
+        "--email",
+        type=str,
+        default=None,
+        help="LinkedIn account email (uses LINKEDIN_TEST_EMAIL env var if not provided)"
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear the browser profile before running (fresh start)"
+    )
+    return parser.parse_args()
+
+
+def load_cookies(email: str) -> list:
     """Load cookies from cache and convert to Playwright format."""
-    if not CACHE_PATH.exists():
-        print(f"❌ Cookie cache not found: {CACHE_PATH}")
-        print("   Run: python scripts/save_test_auth.py")
-        sys.exit(1)
+    # Try account-specific cache first
+    cache_path = get_cache_path(email)
 
-    with open(CACHE_PATH) as f:
+    if not cache_path.exists():
+        # Fall back to legacy cache
+        if LEGACY_CACHE_PATH.exists():
+            print(f"⚠️  Using legacy cache (consider re-running scripts/save_test_auth.py)")
+            cache_path = LEGACY_CACHE_PATH
+        else:
+            print(f"❌ Cookie cache not found for {email}")
+            print(f"   Expected: {cache_path}")
+            print("   Run: python scripts/save_test_auth.py")
+            sys.exit(1)
+
+    with open(cache_path) as f:
         cookies_dict = json.load(f)
 
     cookie_list = []
@@ -57,18 +104,40 @@ def load_cookies() -> list:
     return cookie_list
 
 
-async def test_extraction():
+async def test_extraction(cautious_mode: bool = False, email: str = None, clear_profile: bool = False):
+    # Get email from argument or environment
+    if not email:
+        email = os.environ.get('LINKEDIN_TEST_EMAIL', '').strip()
+
+    if not email:
+        print("❌ Email required. Use --email or set LINKEDIN_TEST_EMAIL env var")
+        sys.exit(1)
+
+    # Get account-specific profile ID
+    profile_id = AccountManager.get_profile_id(email)
+    account_mgr = AccountManager()
+
     print("=" * 70)
     print("TEST: LinkedIn Connection Extraction (Using Cached Cookies)")
     print("=" * 70)
+    print(f"Account: {email}")
+    print(f"Profile: {profile_id}")
+    if cautious_mode:
+        print("Mode: CAUTIOUS (2x slower, more idle pauses)")
+    else:
+        print("Mode: NORMAL")
 
-    cookies = load_cookies()
+    # Clear profile if requested
+    if clear_profile:
+        print(f"\n🗑️  Clearing browser profile for fresh start...")
+        account_mgr.clear_profile(email)
+
+    cookies = load_cookies(email)
     print(f"✅ Loaded {len(cookies)} cookies from cache")
 
-    # Use the SAME profile that save_test_auth.py used
-    # This ensures LinkedIn recognizes it as the same "device"
+    # Use account-specific profile (isolated from other accounts)
     async with StealthBrowser.launch_persistent(
-        session_id="auth_test_account",
+        session_id=profile_id,
         headless=False
     ) as sb:
         # The profile already has cookies from the original auth,
@@ -336,4 +405,9 @@ async def test_extraction():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_extraction())
+    args = parse_args()
+    asyncio.run(test_extraction(
+        cautious_mode=args.cautious,
+        email=args.email,
+        clear_profile=args.clear
+    ))

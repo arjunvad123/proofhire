@@ -2,7 +2,7 @@
 
 ## Technical Architecture for Network Intelligence & Outreach
 
-**Version 3.3** | February 2026 | Status: Stealth Implementation Complete
+**Version 3.4** | February 2026 | Status: Multi-Account Architecture + Hardened Behavior
 
 ---
 
@@ -18,24 +18,31 @@ This document outlines Agencity's LinkedIn automation system that enables:
 
 **Architecture Philosophy**: Use **Playwright + playwright-stealth** with persistent browser profiles, **ghost cursor** for human behavior simulation, and comprehensive anti-detection measures. Conservative rate limits and warning detection minimize risk of account restrictions.
 
-**Latest Update (v3.3)**: Successfully implemented StealthBrowser module with ghost cursor integration. Session invalidation issue **RESOLVED** - connections page now loads without authentication redirects.
+**Latest Update (v3.4)**:
+- ✅ Multi-account isolation via `AccountManager` (email-hashed browser profiles)
+- ✅ Hardened scrolling with idle patterns, warmup mode, momentum scrolling
+- ✅ Configurable extraction modes (CAUTIOUS vs NORMAL)
+- ⚠️ Known issue: First-time CAPTCHA on new browser profiles (see [Known Issues](#known-issues))
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Stealth & Anti-Detection System](#2-stealth--anti-detection-system)
-3. [Phase 1: Session Authentication](#3-phase-1-session-authentication)
-4. [Phase 2: Connection Extraction](#4-phase-2-connection-extraction)
-5. [Phase 3: Smart Prioritization](#5-phase-3-smart-prioritization)
-6. [Phase 4: Profile Enrichment](#6-phase-4-profile-enrichment)
-7. [Phase 5: DM Automation](#7-phase-5-dm-automation)
-8. [Risk Mitigation](#8-risk-mitigation)
-9. [Database Schema](#9-database-schema)
-10. [API Reference](#10-api-reference)
-11. [Cost Analysis](#11-cost-analysis)
-12. [Implementation & Testing Plan](#12-implementation--testing-plan)
+2. [Multi-Account Architecture](#2-multi-account-architecture)
+3. [Stealth & Anti-Detection System](#3-stealth--anti-detection-system)
+4. [Hardened Human Behavior](#4-hardened-human-behavior)
+5. [Phase 1: Session Authentication](#5-phase-1-session-authentication)
+6. [Phase 2: Connection Extraction](#6-phase-2-connection-extraction)
+7. [Phase 3: Smart Prioritization](#7-phase-3-smart-prioritization)
+8. [Phase 4: Profile Enrichment](#8-phase-4-profile-enrichment)
+9. [Phase 5: DM Automation](#9-phase-5-dm-automation)
+10. [Risk Mitigation](#10-risk-mitigation)
+11. [Known Issues & Solutions](#11-known-issues--solutions)
+12. [Database Schema](#12-database-schema)
+13. [API Reference](#13-api-reference)
+14. [Cost Analysis](#14-cost-analysis)
+15. [Implementation & Testing Plan](#15-implementation--testing-plan)
 
 ---
 
@@ -139,7 +146,92 @@ This document outlines Agencity's LinkedIn automation system that enables:
 
 ---
 
-## 2. Stealth & Anti-Detection System
+## 2. Multi-Account Architecture
+
+### Overview
+
+**Status**: ✅ **IMPLEMENTED** (v3.4)
+
+Each LinkedIn account gets a completely isolated browser profile, preventing cookie pollution between accounts. This is critical for:
+- Server deployment managing multiple user accounts
+- Testing with multiple accounts without cross-contamination
+- Production reliability
+
+### Architecture
+
+```
+browser_profiles/
+├── 520a247abacf0f04/          # SHA256(account1@email.com)[:16]
+│   └── Default/               # Chromium profile data
+│       ├── Cookies
+│       ├── Local Storage/
+│       └── Cache/
+├── 8f3a92b1c4d5e6f7/          # SHA256(account2@email.com)[:16]
+│   └── Default/
+└── account_metadata.json      # Tracks creation/last-used times
+```
+
+### AccountManager API
+
+```python
+from app.services.linkedin import AccountManager
+
+mgr = AccountManager()
+
+# Get profile ID from email (deterministic hash)
+profile_id = AccountManager.get_profile_id("user@example.com")
+# Returns: "520a247abacf0f04"
+
+# Get profile path
+path = mgr.get_profile_path("user@example.com")
+# Returns: Path("./browser_profiles/520a247abacf0f04")
+
+# Check if profile exists (already warmed up)
+if mgr.profile_exists("user@example.com"):
+    print("Profile is warmed - no CAPTCHA expected")
+
+# Clear profile (reset, requires re-verification)
+mgr.clear_profile("user@example.com")
+
+# Delete profile completely
+mgr.delete_profile("user@example.com")
+
+# List all profiles with metadata
+profiles = mgr.list_profiles()
+# Returns: [{"profile_id": "520a...", "size_mb": 45.2, "last_used": "...", ...}]
+
+# Cleanup old profiles (unused for 30+ days)
+deleted_count = mgr.cleanup_old_profiles(days_unused=30)
+```
+
+### Integration with StealthBrowser
+
+```python
+from app.services.linkedin import AccountManager, StealthBrowser
+
+# Get isolated profile ID for this user's email
+profile_id = AccountManager.get_profile_id(user_email)
+
+# Launch browser with isolated profile
+async with StealthBrowser.launch_persistent(
+    session_id=profile_id,  # Uses email hash, not arbitrary ID
+    headless=False,
+    user_location='San Francisco, CA'
+) as sb:
+    page = await sb.new_page()
+    # This user's cookies are isolated from all other accounts
+```
+
+### Key Principles
+
+1. **Email → Profile ID**: Deterministic hash ensures same email always maps to same profile
+2. **No Cross-Pollution**: Each account's cookies/cache are completely isolated
+3. **Preserve Warmed Profiles**: Never delete profiles that are already trusted by LinkedIn
+4. **First-Time Verification**: New profiles require one-time CAPTCHA/email verification
+
+---
+
+## 3. Stealth & Anti-Detection System
 
 ### Overview
 
@@ -265,6 +357,126 @@ Proper cookie handling prevents session invalidation:
 | **Mouse movements** | Detects straight lines | Use Bezier curves via ghost cursor |
 | **Typing patterns** | Detects instant fills | Character-by-character with delays |
 | **Scroll behavior** | Detects instant scrolls | Use mouse-wheel events |
+
+---
+
+## 4. Hardened Human Behavior
+
+### Overview
+
+**Status**: ✅ **IMPLEMENTED** (v3.4)
+
+Enhanced scrolling and idle patterns that mimic real user behavior for safer automation, especially with new accounts.
+
+### Extraction Modes
+
+Two configurable presets balance speed vs. safety:
+
+| Setting | CAUTIOUS (New Accounts) | NORMAL (Established) |
+|---------|-------------------------|----------------------|
+| Scroll delay | 3.5-8.0s | 3.0-7.0s |
+| Read pause | 2.0-5.0s | 1.5-4.5s |
+| Warmup connections | 20 | 10 |
+| Idle frequency | 1.5x | 1.0x |
+| Back-scroll chance | 25% | 20% |
+| Card inspection | 12% | 10% |
+
+```python
+from app.services.linkedin import ExtractionConfig, ExtractionMode
+
+# Get config for mode
+config = ExtractionConfig.from_mode(ExtractionMode.CAUTIOUS)
+
+# Or use presets directly
+config = ExtractionConfig.cautious()  # For new accounts
+config = ExtractionConfig.normal()    # For established accounts
+```
+
+### Idle Pattern Generator
+
+Real users don't maintain constant attention. The `IdlePatternGenerator` simulates:
+
+| Pattern | Chance | Duration | Simulation |
+|---------|--------|----------|------------|
+| Phone check | 8% | 5-15s | Move mouse to edge, pause |
+| Thinking pause | 12% | 3-8s | Just pause (considering content) |
+| Distraction | 3% | 30-60s | Got distracted by something |
+| Mini break | 2% | 2-5 min | Bathroom, coffee, etc. |
+
+```python
+from app.services.linkedin import IdlePatternGenerator
+
+idle_gen = IdlePatternGenerator(frequency_multiplier=1.5)
+idle_gen.start_session()
+
+# During extraction loop:
+idle_event = await idle_gen.run_idle_check(page)
+if idle_event != "none":
+    logger.info(f"Idle event: {idle_event}")
+```
+
+### Warmup Period
+
+New sessions start slower and ramp up:
+
+| Phase | Delay Multiplier | When |
+|-------|------------------|------|
+| Very cautious | 2.0x | First 5 min or first 25% of warmup_connections |
+| Slower | 1.5x | 5-15 min or 25-50% of warmup_connections |
+| Slightly slow | 1.2x | 15-30 min or 50-100% of warmup_connections |
+| Normal | 1.0x | After 30 min or warmup complete |
+
+### Momentum Scrolling
+
+Natural scroll physics with acceleration/deceleration:
+
+```python
+async def scroll_with_momentum(self, target_distance: int):
+    """
+    Scroll with realistic momentum:
+    1. Start slow (building up)
+    2. Speed up in middle (fluid motion)
+    3. Slow down at end (deceleration)
+
+    Uses sine curve for natural acceleration.
+    """
+```
+
+### Card Inspection
+
+Simulates user considering whether to click on a profile:
+
+```python
+# 10-12% chance per scroll cycle
+if random.random() < config.card_inspection_chance:
+    await idle_gen.inspect_random_card(page)
+    # Hovers over a visible card for 1-3 seconds without clicking
+```
+
+### CLI Usage
+
+```bash
+# Test with cautious mode (recommended for new accounts)
+python test_extraction_cached.py --cautious --email user@example.com
+
+# Or set environment variable
+export LINKEDIN_CAUTIOUS_MODE=true
+python test_extraction_cached.py
+```
+
+### Time Impact
+
+| Behavior | Risk Reduction | Time Cost |
+|----------|----------------|-----------|
+| Longer delays | High | +50% |
+| Idle patterns | Medium | +20% |
+| Warmup period | Medium | First 20 connections slower |
+| Card inspection | Low | Minimal |
+| **Total** | | **~70% longer extraction** |
+
+This is acceptable for safety - extraction takes ~25 min instead of ~15 min for 3,000 connections.
+
+---
 
 ### Testing Suite
 
@@ -907,7 +1119,112 @@ async def handle_warning(session_id: str):
 
 ---
 
-## 8. Database Schema
+## 11. Known Issues & Solutions
+
+### Issue 1: First-Time CAPTCHA on New Browser Profiles
+
+**Problem**: When a browser profile is new (or cleared), LinkedIn shows a CAPTCHA ("I'm not a robot") during login. This happens regardless of stealth measures because LinkedIn requires device trust verification.
+
+**Why It Happens**:
+- New browser profile = new device fingerprint
+- LinkedIn security requires human verification for new devices
+- This is standard behavior for ALL users, not just automation
+
+**Solution - Production UX Flow**:
+
+```
+First Time Connection (per account):
+┌──────────────────────────────────────────────────────────────┐
+│ 1. User enters LinkedIn credentials in your app              │
+│ 2. Backend opens browser with isolated profile               │
+│ 3. LinkedIn may show CAPTCHA/email verification              │
+│ 4. User completes verification in browser window (one time)  │
+│ 5. Cookies saved to warmed profile                           │
+│ 6. Profile is now trusted                                    │
+└──────────────────────────────────────────────────────────────┘
+
+All Future Sessions:
+┌──────────────────────────────────────────────────────────────┐
+│ 1. Load cookies from warmed profile                          │
+│ 2. No CAPTCHA, no login needed                               │
+│ 3. Direct access to LinkedIn                                 │
+│ 4. Run extraction, DMs, etc.                                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Key Principle**: **Never delete warmed browser profiles**. The account isolation system keeps each account's profile separate - preserve them.
+
+**Code Handling**:
+```python
+# credential_auth.py now waits up to 5 minutes for checkpoint completion
+elif state == LoginState.CHECKPOINT:
+    # Wait for user to complete verification in browser
+    # Auto-detects when logged in and continues
+```
+
+### Issue 2: Proxy Connection Failures
+
+**Problem**: SmartProxy connection timing out.
+
+**Potential Causes**:
+1. Invalid API key format
+2. Account not activated
+3. Network/firewall blocking proxy ports
+
+**Diagnosis**:
+```python
+from app.services.linkedin.proxy_manager import ProxyManager
+import asyncio
+
+async def test():
+    pm = ProxyManager()
+    if pm.is_configured:
+        proxy = pm.get_proxy_for_location('us', sticky_session_id='test')
+        result = await pm.check_proxy_health(proxy)
+        print(result)
+
+asyncio.run(test())
+```
+
+**Solutions**:
+1. Verify SmartProxy dashboard shows active subscription
+2. Check API key is correct format
+3. Test from different network
+4. Contact SmartProxy support if credentials are valid
+
+### Issue 3: Session Invalidation After Page Navigation
+
+**Problem**: LinkedIn redirects to login after accessing certain pages.
+
+**Status**: ✅ **RESOLVED in v3.3**
+
+**Solution**: StealthBrowser with proper cookie handling and natural navigation chain (feed → mynetwork → connections).
+
+### Issue 4: Profile Cross-Contamination
+
+**Problem**: Cookies from one LinkedIn account affecting another.
+
+**Status**: ✅ **RESOLVED in v3.4**
+
+**Solution**: AccountManager with email-hashed profile IDs ensures complete isolation.
+
+### Issue 5: Detection of Automation Patterns
+
+**Problem**: LinkedIn detecting bot-like behavior during extraction.
+
+**Status**: ✅ **MITIGATED in v3.4**
+
+**Solutions Implemented**:
+- Idle patterns (phone checks, thinking pauses)
+- Momentum-based scrolling
+- Warmup period for new sessions
+- Variable back-scrolling
+- Card inspection simulation
+- Ghost cursor with Bezier curves
+
+---
+
+## 12. Database Schema
 
 ```sql
 -- LinkedIn Sessions
@@ -1195,21 +1512,44 @@ python agencity/tests/test_phase1_phase2.py
 This architecture provides a **simple, proven approach** using:
 
 1. ✅ **Playwright + playwright-stealth** - Battle-tested automation
-2. ✅ **Persistent browser profiles** - Mimics real usage patterns
-3. ✅ **Human behavior engine** - Natural delays and patterns
-4. ✅ **Warning detection** - Immediate pause on restrictions
-5. ✅ **Conservative limits** - 50% of known safe thresholds
-6. ✅ **Scraper pool isolation** - Zero risk to user accounts
+2. ✅ **Multi-account isolation** - Email-hashed browser profiles via AccountManager
+3. ✅ **Persistent browser profiles** - Mimics real usage patterns, preserves device trust
+4. ✅ **Hardened human behavior** - Idle patterns, warmup mode, momentum scrolling
+5. ✅ **Configurable extraction modes** - CAUTIOUS for new accounts, NORMAL for established
+6. ✅ **Warning detection** - Immediate pause on restrictions
+7. ✅ **Conservative limits** - 50% of known safe thresholds
+8. ✅ **Scraper pool isolation** - Zero risk to user accounts
 
-**Status**: 🟢 Production Ready
+**Status**: 🟡 Testing Phase - Multi-account architecture implemented, residential proxy configuration in progress
+
+**Current Blockers**:
+- Residential proxy connection needs verification
+- First-time CAPTCHA requires one-time manual completion per account
+
+**Production UX Reality**:
+- Users complete CAPTCHA/verification **once** on first connection
+- After that, browser profile is trusted and automation runs indefinitely
+- This is standard for all LinkedIn tools (Phantombuster, Dripify, etc.)
 
 **Next Steps**:
-1. Add playwright-stealth to existing implementation
-2. Test with real LinkedIn account for 48 hours
-3. Monitor for any warnings or restrictions
-4. Deploy to production if tests pass
+1. ✅ Implement multi-account isolation (AccountManager)
+2. ✅ Implement hardened human behavior (IdlePatternGenerator)
+3. 🔄 Configure and test residential proxy
+4. 🔄 Warm up test accounts (one-time CAPTCHA completion)
+5. ⬜ 48-hour monitoring test
+6. ⬜ Deploy to production
+
+**Files Changed (v3.4)**:
+- `app/services/linkedin/account_manager.py` - NEW: Multi-account profile management
+- `app/services/linkedin/human_behavior.py` - Added IdlePatternGenerator, ExtractionConfig
+- `app/services/linkedin/connection_extractor.py` - Integrated hardened behavior
+- `app/services/linkedin/credential_auth.py` - Account-based profile isolation, checkpoint handling
+- `app/services/linkedin/proxy_manager.py` - SmartProxy username/password support
+- `scripts/save_test_auth.py` - Account-specific cache files
+- `scripts/manual_login.py` - NEW: Manual checkpoint completion
+- `test_extraction_cached.py` - Added --email and --clear flags
 
 **Resources**:
 - [playwright-stealth GitHub](https://github.com/AtuboDad/playwright_stealth)
 - [PhantomBuster LinkedIn Limits](https://phantombuster.com/blog/guides/linkedin-automation-rate-limits-2021-edition-5pFlkXZFjtku79DltwBF0M)
-- [Smartproxy Residential Proxies](https://smartproxy.com/)l;
+- [Smartproxy Residential Proxies](https://smartproxy.com/)

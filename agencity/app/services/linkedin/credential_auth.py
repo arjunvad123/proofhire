@@ -26,6 +26,7 @@ from playwright.async_api import BrowserContext, Page
 from .encryption import CookieEncryption
 from .human_behavior import HumanBehaviorEngine, GhostCursor
 from .stealth_browser import StealthBrowser
+from .account_manager import AccountManager
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,13 @@ class LinkedInCredentialAuth:
             }
         """
         try:
-            # Use a persistent browser profile when a user_id is supplied
-            if user_id:
+            # Use a persistent browser profile keyed to the EMAIL (not user_id)
+            # This ensures each LinkedIn account gets its own isolated browser profile
+            # The email hash guarantees no cross-account cookie pollution
+            if email:
+                profile_id = AccountManager.get_profile_id(email)
                 browser_ctx = StealthBrowser.launch_persistent(
-                    session_id=f"auth_{user_id}",
+                    session_id=profile_id,
                     headless=False,
                     user_location=user_location,
                 )
@@ -183,11 +187,41 @@ class LinkedInCredentialAuth:
                             continue  # Check state again
 
                         elif state == LoginState.CHECKPOINT:
-                            # Security checkpoint - might need manual intervention
-                            return {
-                                'status': 'error',
-                                'error': 'Security checkpoint detected. Please log in manually.'
-                            }
+                            # Security checkpoint - wait for user to complete in browser
+                            # This is normal for new devices - LinkedIn requires human verification
+                            logger.info("Checkpoint detected - waiting for user to complete verification")
+
+                            # Wait up to 5 minutes for user to complete checkpoint
+                            checkpoint_timeout = 300  # 5 minutes
+                            start_time = asyncio.get_event_loop().time()
+
+                            while (asyncio.get_event_loop().time() - start_time) < checkpoint_timeout:
+                                await asyncio.sleep(3)
+                                new_state = await self._detect_login_state(page, email)
+
+                                if new_state == LoginState.LOGGED_IN:
+                                    # User completed checkpoint!
+                                    logger.info("User completed checkpoint successfully")
+                                    break
+                                elif new_state == LoginState.CHECKPOINT:
+                                    # Still on checkpoint, keep waiting
+                                    continue
+                                elif new_state == LoginState.TWO_FA:
+                                    # Moved to 2FA after checkpoint
+                                    state = new_state
+                                    break
+                                else:
+                                    # State changed to something else
+                                    state = new_state
+                                    break
+                            else:
+                                # Timeout - user didn't complete in time
+                                return {
+                                    'status': 'checkpoint_required',
+                                    'error': 'Security checkpoint requires verification. Please complete in browser.',
+                                    'message': 'LinkedIn requires additional verification for this device. Please complete the security check in the browser window.'
+                                }
+                            continue  # Re-check state after checkpoint
 
                         elif state == LoginState.ERROR:
                             return {
