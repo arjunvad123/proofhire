@@ -1,0 +1,50 @@
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-20250514"
+      },
+      "workspace": "./workspace"
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "auth": {
+      "token": "agencity-local-dev"
+    }
+  },
+  "tools": {
+    "web": {
+      "fetch": {
+        "enabled": true
+      },
+      "search": {
+        "enabled": true
+      }
+    }
+  },
+  "memory": {
+    "backend": "builtin"
+  },
+  "plugins": {
+    "enabled": true,
+    "load": {
+      "paths": [
+        "/Users/arjunvad/openclaw-fork/extensions/agencity"
+      ]
+    },
+    "allow": ["agencity"],
+    "entries": {
+      "agencity": {
+        "enabled": true,
+        "config": {
+          "apiBase": "http://localhost:8001",
+          "apiKey": "",
+          "defaultMode": "quick",
+          "timeoutMs": 60000
+        }
+      }
+    }
+  }
+}
