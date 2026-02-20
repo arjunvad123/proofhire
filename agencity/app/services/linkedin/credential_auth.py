@@ -291,14 +291,9 @@ class LinkedInCredentialAuth:
             except:
                 pass
 
-        # Check for "Welcome Back" account selector
-        try:
-            welcome_back = await page.locator('text="Welcome Back"').count()
-            has_account_card = await page.locator('text=/[a-z]\\*+@/i').count()  # Masked email
-            if welcome_back > 0 or has_account_card > 0:
-                return LoginState.WELCOME_BACK
-        except:
-            pass
+        # Check for login/password forms FIRST — these take priority over
+        # "Welcome Back" text since clicking the Welcome Back card leads to
+        # a password form that may still contain "Welcome Back" text.
 
         # Check for standard login form
         try:
@@ -312,9 +307,17 @@ class LinkedInCredentialAuth:
         # Check for password-only form (email pre-filled or remembered)
         try:
             password_only = await page.locator('input[type="password"]').count()
-            no_email = await page.locator('input[name="session_key"]').count() == 0
-            if password_only > 0 and no_email:
+            if password_only > 0:
                 return LoginState.PASSWORD_ONLY
+        except:
+            pass
+
+        # Check for "Welcome Back" account selector (only if no form inputs found)
+        try:
+            welcome_back = await page.locator('text="Welcome Back"').count()
+            has_account_card = await page.locator('text=/[a-z]\\*+@/i').count()  # Masked email
+            if welcome_back > 0 or has_account_card > 0:
+                return LoginState.WELCOME_BACK
         except:
             pass
 

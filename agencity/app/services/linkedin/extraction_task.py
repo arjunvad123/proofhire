@@ -25,7 +25,8 @@ async def run_connection_extraction(
     job_id: str,
     session_id: str,
     supabase: Client,
-    cautious_mode: Optional[bool] = None
+    cautious_mode: Optional[bool] = None,
+    use_proxy: bool = True
 ) -> None:
     """
     Background task to extract LinkedIn connections.
@@ -36,13 +37,16 @@ async def run_connection_extraction(
         supabase: Supabase client
         cautious_mode: Use cautious mode (2x slower, more idle pauses).
                       If None, reads from LINKEDIN_CAUTIOUS_MODE env var.
+        use_proxy: Whether to use residential proxy (disable for local testing).
     """
     # Determine cautious mode from parameter or environment
     if cautious_mode is None:
         cautious_mode = os.environ.get('LINKEDIN_CAUTIOUS_MODE', '').lower() in ('1', 'true', 'yes')
 
     session_manager = LinkedInSessionManager(supabase)
-    extractor = LinkedInConnectionExtractor(session_manager, cautious_mode=cautious_mode)
+    extractor = LinkedInConnectionExtractor(
+        session_manager, cautious_mode=cautious_mode, use_proxy=use_proxy
+    )
 
     logger.info(f"Starting extraction job {job_id}, cautious_mode={cautious_mode}")
 

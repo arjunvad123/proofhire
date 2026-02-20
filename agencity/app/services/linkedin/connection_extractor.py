@@ -62,6 +62,7 @@ class LinkedInConnectionExtractor:
         self,
         session_manager: LinkedInSessionManager,
         cautious_mode: bool = False,
+        use_proxy: bool = True,
     ):
         """
         Initialize extractor.
@@ -69,8 +70,10 @@ class LinkedInConnectionExtractor:
         Args:
             session_manager: Session manager for cookie handling
             cautious_mode: Use extra-safe timing for new accounts
+            use_proxy: Whether to use residential proxy (disable for local testing)
         """
         self.session_manager = session_manager
+        self.use_proxy = use_proxy
         self.behavior = HumanBehaviorEngine()
 
         # Determine extraction mode from parameter or environment
@@ -135,28 +138,39 @@ class LinkedInConnectionExtractor:
                     'error': 'Session not found or expired'
                 }
 
-            # Get proxy for session
+            # Get session info
             session = await self.session_manager.get_session(session_id)
-            user_location = session.get('user_location')
+            user_location = session.get('user_location') if self.use_proxy else None
+
+            # Use the email-hashed profile_id so we share the same browser
+            # profile that was used during authentication. This is critical —
+            # LinkedIn ties session validity to the browser profile/fingerprint.
+            browser_profile_id = session.get('profile_id') or session_id
+            logger.info(f"Using browser profile: {browser_profile_id}")
 
             async with StealthBrowser.launch_persistent(
-                session_id=session_id,
+                session_id=browser_profile_id,
                 headless=False,
                 user_location=user_location,
             ) as sb:
-                # Add cookies if not already in persistent profile
+                # Use the persistent profile's cookies as-is.
+                # The credential_auth already logged in using this same
+                # profile, so all necessary cookies (li_at, JSESSIONID,
+                # bcookie, bscookie, and ~25 tracking/analytics cookies)
+                # are already present and valid.
+                #
+                # DO NOT clear and re-inject! LinkedIn expects all the
+                # cookies set during browsing, not just the 7 we store.
                 current_cookies = await sb.context.cookies()
                 has_li_at = any(c['name'] == 'li_at' for c in current_cookies)
-                logger.info(f"Browser profile has li_at: {has_li_at}, existing cookies: {len(current_cookies)}")
+                logger.info(f"Browser profile cookies: {len(current_cookies)}, li_at: {has_li_at}")
 
                 if not has_li_at:
-                    logger.info(f"Injecting {len(cookies)} cookies from session")
+                    # Profile has no li_at at all — inject from session
+                    logger.warning("Profile missing li_at — injecting session cookies")
                     await self._add_session_cookies(sb.context, cookies)
-
-                    # Verify injection
                     after_cookies = await sb.context.cookies()
-                    has_li_at_after = any(c['name'] == 'li_at' for c in after_cookies)
-                    logger.info(f"After injection: li_at present: {has_li_at_after}, total: {len(after_cookies)}")
+                    logger.info(f"After injection: {len(after_cookies)} cookies")
 
                 page = await sb.new_page()
 
@@ -168,7 +182,7 @@ class LinkedInConnectionExtractor:
                     # Instead of jumping straight to /connections (which LinkedIn
                     # detects as suspicious), walk through the natural page flow
                     # like a real user would.
-                    navigated = await self._navigate_to_connections_naturally(page)
+                    navigated = await self._navigate_to_connections_naturally(page, cookies)
                     if not navigated:
                         return {
                             'status': 'error',
@@ -226,7 +240,7 @@ class LinkedInConnectionExtractor:
     # Natural navigation chain
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _navigate_to_connections_naturally(self, page: Page) -> bool:
+    async def _navigate_to_connections_naturally(self, page: Page, cookies: Dict[str, Any] = None) -> bool:
         """
         Navigate from feed → mynetwork → connections with realistic delays.
 
@@ -250,51 +264,90 @@ class LinkedInConnectionExtractor:
             )
             await asyncio.sleep(random.uniform(2.0, 4.0))
 
+            logger.info(f"After feed navigation, URL: {page.url}")
+
             # Quick check: are we logged in?
             if not await self._is_logged_in(page):
-                logger.warning("Not logged in after feed navigation")
+                logger.warning(f"Not logged in after feed navigation — URL: {page.url}")
+                await page.screenshot(path='debug_nav_feed_fail.png')
                 return False
 
             # Simulate reading the feed briefly (scroll a bit, pause)
             await self._simulate_feed_browsing(page)
 
-            # Step 2: Navigate to My Network (via top nav or URL)
-            logger.info("Navigation chain: step 2 — loading My Network")
-            clicked = await self._click_my_network_link(page)
-            if not clicked:
-                # Fallback: navigate directly (still has Referer from feed)
-                await page.goto(
-                    'https://www.linkedin.com/mynetwork/',
-                    wait_until='load',
-                    timeout=30000
-                )
+            # Step 2: Click "My Network" in the top nav
+            logger.info("Navigation chain: step 2 — clicking My Network")
+
+            # Scroll back to top so the nav bar is visible
+            await page.evaluate('window.scrollTo(0, 0)')
+            await asyncio.sleep(random.uniform(0.3, 0.6))
+
+            # Try up to 2 times — the first click sometimes misses
+            for attempt in range(2):
+                if '/mynetwork' in page.url:
+                    break
+                clicked = await self._click_nav_link(page, 'mynetwork')
+                if clicked:
+                    break
+                logger.info(f"My Network click attempt {attempt + 1} failed, URL: {page.url}")
+
+                # If we ended up at homepage (/) — still authenticated,
+                # retry from here
+                if page.url.rstrip('/') == 'https://www.linkedin.com':
+                    await page.evaluate('window.scrollTo(0, 0)')
+                    await asyncio.sleep(1.0)
+
             await asyncio.sleep(random.uniform(1.5, 3.5))
+            logger.info(f"After mynetwork navigation, URL: {page.url}")
 
+            # Check if we're still on an authenticated page
             if not await self._is_logged_in(page):
-                logger.warning("Not logged in after My Network navigation")
-                return False
+                logger.warning(f"Not logged in after My Network — URL: {page.url}")
+                handled = await self._handle_login_redirect(page, cookies)
+                if not handled:
+                    await page.screenshot(path='debug_nav_mynetwork_fail.png')
+                    return False
 
-            # Step 3: Navigate to Connections
-            logger.info("Navigation chain: step 3 — loading Connections page")
-            clicked = await self._click_connections_link(page)
-            if not clicked:
-                # Fallback: navigate directly (Referer = /mynetwork/)
-                await page.goto(
-                    'https://www.linkedin.com/mynetwork/invite-connect/connections/',
-                    wait_until='load',
-                    timeout=30000
-                )
+            # Step 3: Navigate to Connections page
+            logger.info("Navigation chain: step 3 — navigating to Connections")
+
+            # If we're on /mynetwork/, look for a "Connections" link to click
+            if '/mynetwork' in page.url:
+                clicked = await self._click_connections_link(page)
+
+            # If not on connections yet, try SPA-style navigation first
+            if '/connections' not in page.url:
+                logger.info(f"Trying SPA navigation to connections from {page.url}")
+                # Use the My Network nav click to get to connections
+                spa_success = await self._click_nav_link(page, 'mynetwork/invite-connect/connections')
+                if not spa_success:
+                    # page.goto as last resort
+                    logger.info("SPA nav failed, using page.goto to connections")
+                    await page.goto(
+                        'https://www.linkedin.com/mynetwork/invite-connect/connections/',
+                        wait_until='load',
+                        timeout=30000
+                    )
+
             await asyncio.sleep(random.uniform(1.5, 3.0))
+            logger.info(f"After connections navigation, URL: {page.url}")
 
             if not await self._is_logged_in(page):
-                logger.warning("Not logged in after Connections navigation")
-                return False
+                logger.warning(f"Not logged in after Connections — URL: {page.url}")
+                handled = await self._handle_login_redirect(page, cookies)
+                if not handled:
+                    await page.screenshot(path='debug_nav_connections_fail.png')
+                    return False
 
             logger.info("Navigation chain: successfully reached connections page")
             return True
 
         except Exception as e:
             logger.error(f"Navigation chain failed: {e}")
+            try:
+                await page.screenshot(path='debug_nav_exception.png')
+            except Exception:
+                pass
             return False
 
     async def _simulate_feed_browsing(self, page: Page) -> None:
@@ -317,43 +370,274 @@ class LinkedInConnectionExtractor:
             await cursor.scroll(-150)
             await asyncio.sleep(random.uniform(0.5, 1.0))
 
-    async def _click_my_network_link(self, page: Page) -> bool:
-        """Try to click the 'My Network' link in the top navigation bar."""
-        selectors = [
-            'a[href*="/mynetwork/"]',
-            'a:has-text("My Network")',
-            'nav a[href*="mynetwork"]',
-            'li.global-nav__primary-item a[href*="mynetwork"]',
-        ]
-        for selector in selectors:
+    async def _click_nav_link(self, page: Page, target: str) -> bool:
+        """
+        Click a link in LinkedIn's top navigation bar.
+
+        Strategy:
+        1. First try GhostCursor click on the specific nav element
+        2. If that misses (nav bar elements are tricky due to fixed positioning),
+           fall back to Playwright's native click
+        3. As last resort, use page.evaluate to programmatically click
+
+        LinkedIn uses SPA-style client-side navigation, so we wait for URL
+        change rather than a full page load event.
+
+        Args:
+            page: Playwright page
+            target: URL substring to match (e.g. 'mynetwork', 'messaging')
+
+        Returns:
+            True if navigation succeeded (URL contains target)
+        """
+        selector = f'a[href*="/{target}"]'
+
+        # Dump nav links for debugging
+        try:
+            nav_info = await page.evaluate(r'''(target) => {
+                const links = document.querySelectorAll('a[href*="/' + target + '"]');
+                return Array.from(links).map(a => ({
+                    href: a.href,
+                    text: a.textContent?.trim().substring(0, 50),
+                    visible: a.offsetParent !== null,
+                    rect: a.getBoundingClientRect().toJSON(),
+                }));
+            }''', target)
+            logger.info(f"Found {len(nav_info)} links matching '/{target}': {nav_info}")
+        except Exception as e:
+            logger.debug(f"Could not dump nav info: {e}")
+
+        locator = page.locator(selector).first
+        count = await page.locator(selector).count()
+        if count == 0:
+            logger.info(f"No links found matching '{selector}'")
+            return False
+
+        # Check bounding box
+        box = await locator.bounding_box(timeout=3000)
+        if not box:
+            logger.info(f"Nav link has no bounding box (hidden)")
+            return False
+
+        logger.info(f"Nav link box: x={box['x']:.0f}, y={box['y']:.0f}, "
+                   f"w={box['width']:.0f}, h={box['height']:.0f}")
+
+        before_url = page.url
+
+        # Attempt 1: GhostCursor click (most human-like)
+        # First move the cursor near the target, THEN click the element.
+        # This avoids the Bezier path from (0,0) crossing other nav elements.
+        try:
+            logger.info("Attempt 1: GhostCursor click on nav link")
+            cursor = GhostCursor(page)
+
+            # Pre-position cursor near the element (below and slightly left)
+            # to avoid the Bezier path crossing the LinkedIn logo
+            near_x = box['x'] + box['width'] * 0.5
+            near_y = box['y'] + box['height'] + 50  # Below the nav bar
+            await cursor.move_to(near_x, near_y, duration=0.3)
+            await asyncio.sleep(random.uniform(0.1, 0.3))
+
+            # Now click the element — short path, less chance of missing
+            await cursor.click_element(selector)
+
+            # Wait for SPA navigation to complete — LinkedIn can take several seconds
             try:
-                count = await page.locator(selector).count()
-                if count > 0:
-                    await GhostCursorIntegration.click_naturally(page, selector)
-                    await page.wait_for_load_state('load', timeout=15000)
-                    return True
+                await page.wait_for_url(f'**/{target}/**', timeout=10000)
             except Exception:
-                continue
+                pass
+            await asyncio.sleep(1.0)
+
+            if f'/{target}' in page.url:
+                logger.info(f"  GhostCursor click succeeded — URL: {page.url}")
+                return True
+            logger.info(f"  GhostCursor click missed — URL: {page.url}")
+        except asyncio.TimeoutError:
+            logger.warning("  GhostCursor click timed out")
+        except Exception as e:
+            logger.debug(f"  GhostCursor click error: {e}")
+
+        # Attempt 2: Re-fetch bounding box on current page and try mouse click
+        # DO NOT navigate back to feed — page.goto breaks SPA session state.
+        # Instead, retry the click from whatever page we're on now.
+        try:
+            await page.evaluate('window.scrollTo(0, 0)')
+            await asyncio.sleep(0.5)
+
+            # Re-fetch bounding box on current page
+            locator = page.locator(selector).first
+            if await page.locator(selector).count() > 0:
+                box = await locator.bounding_box(timeout=3000)
+                if box:
+                    cx = box['x'] + box['width'] / 2
+                    cy = box['y'] + box['height'] / 2
+                    logger.info(f"Attempt 2: page.mouse.click at ({cx:.0f}, {cy:.0f})")
+                    await page.mouse.click(cx, cy)
+
+                    # Poll for URL change
+                    for i in range(20):  # 10 seconds
+                        await asyncio.sleep(0.5)
+                        if f'/{target}' in page.url:
+                            logger.info(f"  Mouse click succeeded — URL: {page.url}")
+                            try:
+                                await page.wait_for_load_state('load', timeout=10000)
+                            except Exception:
+                                pass
+                            return True
+
+                    logger.info(f"  Mouse click did not reach /{target} — URL: {page.url}")
+        except Exception as e:
+            logger.warning(f"  Mouse click failed: {e}")
+
         return False
 
     async def _click_connections_link(self, page: Page) -> bool:
-        """Try to click a 'Connections' link on the My Network page."""
+        """
+        Click a 'Connections' link on the My Network page.
+
+        LinkedIn's My Network page (/mynetwork/ or /mynetwork/grow/) shows
+        connection management options. We need to find and click the link
+        to the connections list.
+        """
+        # First, log what connection-related links exist on this page
+        try:
+            conn_links = await page.evaluate(r'''() => {
+                const links = document.querySelectorAll('a[href*="connection"]');
+                return Array.from(links).map(a => ({
+                    href: a.href,
+                    text: a.textContent?.trim().substring(0, 80),
+                    visible: a.offsetParent !== null,
+                }));
+            }''')
+            logger.info(f"Connection-related links on page: {conn_links}")
+        except Exception:
+            pass
+
         selectors = [
             'a[href*="/invite-connect/connections"]',
-            'a:has-text("Connections")',
-            'a:has-text("See all")',
+            'a[href*="/mynetwork/invite-connect/connections"]',
             'a[href*="connections"]',
         ]
+
         for selector in selectors:
             try:
+                locator = page.locator(selector).first
                 count = await page.locator(selector).count()
-                if count > 0:
-                    await GhostCursorIntegration.click_naturally(page, selector)
-                    await page.wait_for_load_state('load', timeout=15000)
+                if count == 0:
+                    continue
+
+                logger.info(f"Trying connections selector '{selector}' ({count} matches)")
+
+                box = await locator.bounding_box(timeout=3000)
+                if not box:
+                    logger.info(f"  No bounding box for '{selector}'")
+                    continue
+
+                before_url = page.url
+                try:
+                    await asyncio.wait_for(
+                        GhostCursorIntegration.click_naturally(page, selector),
+                        timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"  GhostCursor click timed out for '{selector}'")
+                    # Try native click as immediate fallback
+                    try:
+                        await locator.click(timeout=5000)
+                    except Exception:
+                        continue
+
+                try:
+                    await page.wait_for_url('**/connections/**', timeout=8000)
+                except Exception:
+                    pass
+
+                await asyncio.sleep(0.5)
+
+                if '/connections' in page.url:
+                    logger.info(f"  Connections click succeeded — navigated to {page.url}")
                     return True
-            except Exception:
+
+                logger.info(f"  Click on '{selector}' did not reach connections (at {page.url})")
+
+            except Exception as e:
+                logger.debug(f"  Selector '{selector}' failed: {e}")
                 continue
+
+        # Final fallback: try native Playwright click
+        try:
+            locator = page.locator('a[href*="connections"]').first
+            if await locator.count() > 0:
+                logger.info("Trying native click on first connections link")
+                await locator.click(timeout=5000)
+                await asyncio.sleep(1.0)
+                if '/connections' in page.url:
+                    return True
+        except Exception:
+            pass
+
         return False
+
+    async def _handle_login_redirect(self, page: Page, cookies: Dict[str, Any] = None) -> bool:
+        """
+        Handle a login redirect by re-injecting cookies and navigating to feed.
+
+        LinkedIn sometimes redirects to a login page when navigating via
+        page.goto() even though the session is valid. This happens because
+        page.goto() does a full page navigation which doesn't carry the SPA
+        state. The solution is to re-inject cookies and navigate to a known
+        working page (/feed/).
+
+        Returns True if we successfully got past the login page.
+        """
+        try:
+            url = page.url
+            logger.info(f"Handling login redirect at: {url}")
+
+            # Strategy 1: Try navigating to /feed/ — if cookies are valid in
+            # the browser profile, this should work
+            logger.info("Attempting to navigate back to /feed/")
+            await page.goto(
+                'https://www.linkedin.com/feed/',
+                wait_until='load',
+                timeout=15000
+            )
+            await asyncio.sleep(2)
+
+            if await self._is_logged_in(page):
+                logger.info(f"  Feed navigation worked — now at: {page.url}")
+                return True
+
+            # Strategy 2: Re-inject cookies and try again
+            if cookies:
+                logger.info("Re-injecting cookies and trying feed again")
+                context = page.context
+                # Clear LinkedIn cookies
+                current_cookies = await context.cookies()
+                linkedin_domains = {'.linkedin.com', '.www.linkedin.com'}
+                non_li = [c for c in current_cookies if c.get('domain', '') not in linkedin_domains]
+                await context.clear_cookies()
+                if non_li:
+                    await context.add_cookies(non_li)
+                await self._add_session_cookies(context, cookies)
+
+                await page.goto(
+                    'https://www.linkedin.com/feed/',
+                    wait_until='load',
+                    timeout=15000
+                )
+                await asyncio.sleep(2)
+
+                if await self._is_logged_in(page):
+                    logger.info(f"  Cookie re-injection worked — now at: {page.url}")
+                    return True
+
+            logger.warning("Could not handle login redirect automatically")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error handling login redirect: {e}")
+            return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Connection extraction (unchanged core logic)
@@ -396,6 +680,54 @@ class LinkedInConnectionExtractor:
         total_count = await self._get_total_connection_count(page)
         if total_count:
             logger.info(f"Total connections detected: {total_count}")
+
+        # ── Diagnostic: dump page structure to understand selectors ──
+        try:
+            dom_info = await page.evaluate(r'''() => {
+                const info = {};
+                // Check for our expected selectors
+                info.componentkey_cards = document.querySelectorAll('[componentkey^="auto-component-"]').length;
+                info.connections_list = document.querySelectorAll('[data-view-name="connections-list"]').length;
+                info.connections_profile = document.querySelectorAll('[data-view-name="connections-profile"]').length;
+                info.profile_links = document.querySelectorAll('a[href*="/in/"]').length;
+
+                // Find all unique data-view-name values
+                const viewNames = new Set();
+                document.querySelectorAll('[data-view-name]').forEach(el => {
+                    viewNames.add(el.getAttribute('data-view-name'));
+                });
+                info.data_view_names = Array.from(viewNames);
+
+                // Find all unique componentkey prefixes
+                const compKeys = new Set();
+                document.querySelectorAll('[componentkey]').forEach(el => {
+                    compKeys.add(el.getAttribute('componentkey'));
+                });
+                info.componentkeys = Array.from(compKeys).slice(0, 20);
+
+                // Sample the first few profile links
+                const links = document.querySelectorAll('a[href*="/in/"]');
+                info.sample_profile_links = Array.from(links).slice(0, 5).map(a => ({
+                    href: a.href,
+                    text: a.textContent?.trim().substring(0, 60),
+                    parent_tag: a.parentElement?.tagName,
+                    grandparent_tag: a.parentElement?.parentElement?.tagName,
+                }));
+
+                // Look at list-like containers
+                const lists = document.querySelectorAll('ul, ol, [role="list"]');
+                info.list_elements = Array.from(lists).map(l => ({
+                    tag: l.tagName,
+                    role: l.getAttribute('role'),
+                    children: l.children.length,
+                    class: l.className?.substring(0, 80),
+                })).filter(l => l.children > 3).slice(0, 10);
+
+                return info;
+            }''')
+            logger.info(f"DOM diagnostic: {dom_info}")
+        except Exception as e:
+            logger.debug(f"DOM diagnostic failed: {e}")
 
         while True:
             # Check if should take break
@@ -480,7 +812,7 @@ class LinkedInConnectionExtractor:
             if random.random() < self.BACK_SCROLL_CHANCE:
                 cursor = GhostCursor(page)
                 # Variable scroll-back distance
-                back_distance = random.randint(-150, -350)
+                back_distance = random.randint(-350, -150)
                 await cursor.scroll(back_distance)
                 await asyncio.sleep(random.uniform(1.5, 3.5))
 
@@ -537,18 +869,19 @@ class LinkedInConnectionExtractor:
         for new content to appear.
         """
         for _ in range(10):
-            current_count = await page.evaluate(r'''() => {
-                const cards = document.querySelectorAll('[componentkey^="auto-component-"]');
-                const urls = new Set();
-                cards.forEach(card => {
-                    const link = card.querySelector('a[href*="/in/"]');
-                    if (link) urls.add(link.href);
-                });
-                return urls.size;
-            }''')
+            try:
+                current_count = await page.evaluate(r'''() => {
+                    const links = document.querySelectorAll('a[href*="/in/"]');
+                    const urls = new Set();
+                    links.forEach(link => urls.add(link.href.split('?')[0]));
+                    return urls.size;
+                }''')
 
-            if current_count > previous_count:
-                return
+                if current_count > previous_count:
+                    return
+            except Exception:
+                # Page may have navigated — wait and retry
+                pass
 
             await asyncio.sleep(0.5)
 
@@ -591,112 +924,112 @@ class LinkedInConnectionExtractor:
         """
         Extract connection data from currently visible connection cards.
 
-        Uses LinkedIn's stable data-view-name attributes and componentkey
-        attributes to find cards reliably despite obfuscated class names.
+        Uses LinkedIn's data-view-name="connections-profile" links as the
+        primary anchor, then walks up to find the containing card (which has
+        a componentkey attribute — any UUID, not just "auto-component-" prefix).
 
         LinkedIn DOM structure (Feb 2026):
-        - List container: [data-view-name="connections-list"]
-        - Card container: [componentkey^="auto-component-"]
-        - Profile links: [data-view-name="connections-profile"]
-        - Name: innermost <a> or <p> with profile link text
+        - List containers: [data-view-name="connections-list"] (one per card)
+        - Card container: [componentkey] (any UUID value)
+        - Profile links: [data-view-name="connections-profile"] (2 per card: image + text)
+        - Name: <a> inside <p> with short text (the name-only link)
         - Headline: <p> element with job description text
-        - Connected date: <p> with "Connected on" text
+        - Connected date: <p> with "Connected" text
         """
         cards_data = await page.evaluate(r'''() => {
             const connections = [];
             const seenUrls = new Set();
 
-            // Find the connections list container
-            const listContainer = document.querySelector('[data-view-name="connections-list"]');
-            if (!listContainer) {
-                // Fallback: search entire document
-                console.warn('connections-list container not found, searching document');
-            }
+            // Strategy: find all connection profile links, deduplicate by URL,
+            // walk up to the card container, extract data from there.
+            const profileLinks = document.querySelectorAll(
+                '[data-view-name="connections-profile"], a[href*="/in/"]'
+            );
 
-            const searchRoot = listContainer || document;
-
-            // Find all connection cards by componentkey (stable attribute)
-            const cards = searchRoot.querySelectorAll('[componentkey^="auto-component-"]');
-
-            cards.forEach(card => {
-                // Find profile link within this card
-                const profileLinks = card.querySelectorAll('a[href*="/in/"]');
-                if (profileLinks.length === 0) return;
-
-                // Get the profile URL from the first link
-                const profileLink = profileLinks[0];
-                const url = profileLink.href?.split('?')[0];
-                if (!url || seenUrls.has(url)) return;
+            profileLinks.forEach(link => {
+                const url = link.href?.split('?')[0];
+                if (!url || !url.includes('/in/') || seenUrls.has(url)) return;
                 seenUrls.add(url);
 
-                // Extract name - look for the innermost text in a profile link
+                // Walk up to find the card container (element with componentkey)
+                let card = link;
+                for (let i = 0; i < 10 && card; i++) {
+                    if (card.hasAttribute && card.hasAttribute('componentkey')) break;
+                    card = card.parentElement;
+                }
+                if (!card || !card.hasAttribute || !card.hasAttribute('componentkey')) return;
+
+                // Extract name — find the shortest <a> text that links to this profile
+                // (the name-only link, not the one with name+headline concatenated)
                 let name = null;
-                for (const link of profileLinks) {
-                    // Check for nested <a> with just the name
-                    const innerA = link.querySelector('a');
-                    if (innerA && innerA.textContent?.trim()) {
-                        name = innerA.textContent.trim();
-                        break;
-                    }
-                    // Check for <p> containing <a> with name
-                    const pWithA = link.querySelector('p a');
-                    if (pWithA && pWithA.textContent?.trim()) {
-                        name = pWithA.textContent.trim();
-                        break;
-                    }
-                    // Fallback: use link text if it looks like a name
-                    const linkText = link.textContent?.trim();
-                    if (linkText && linkText.length > 2 && linkText.length < 60 && !linkText.includes('@')) {
-                        // Skip if it contains headline indicators
-                        if (!linkText.includes(' | ') && !linkText.includes(' at ')) {
-                            name = linkText;
+                const allProfileLinks = card.querySelectorAll('a[href*="/in/"]');
+                let shortestName = null;
+                let shortestLen = Infinity;
+
+                for (const a of allProfileLinks) {
+                    // Look for <a> inside <p> — this is the name-only pattern
+                    if (a.parentElement?.tagName === 'P') {
+                        const text = a.textContent?.trim();
+                        if (text && text.length >= 2 && text.length < 60) {
+                            name = text;
                             break;
                         }
                     }
-                }
-
-                // Extract headline - find <p> elements with job description
-                let headline = null;
-                let connectedDate = null;
-                const paragraphs = card.querySelectorAll('p');
-                for (const p of paragraphs) {
-                    const text = p.textContent?.trim();
-                    if (!text || text.length < 5) continue;
-
-                    // Skip if it's the name
-                    if (text === name) continue;
-
-                    // Check for connected date
-                    if (text.startsWith('Connected on') || text.startsWith('Connected ')) {
-                        connectedDate = text;
-                        continue;
-                    }
-
-                    // Skip UI elements
-                    if (/^(Message|Connect|Follow|Pending|Send|InMail)$/i.test(text)) continue;
-
-                    // This is likely the headline (job title / company)
-                    if (!headline && text.length >= 10 && text.length <= 200) {
-                        headline = text;
+                    // Track shortest non-empty text as fallback
+                    const text = a.textContent?.trim();
+                    if (text && text.length >= 2 && text.length < 60 && text.length < shortestLen) {
+                        shortestName = text;
+                        shortestLen = text.length;
                     }
                 }
 
-                // If no name found from links, try to extract from aria-label
+                if (!name) name = shortestName;
+
+                // Fallback: aria-label on figure element
                 if (!name) {
                     const figure = card.querySelector('figure[aria-label]');
                     if (figure) {
                         const ariaLabel = figure.getAttribute('aria-label');
-                        if (ariaLabel && ariaLabel.includes("'s profile picture")) {
+                        if (ariaLabel?.includes("'s profile picture")) {
                             name = ariaLabel.replace("'s profile picture", "").trim();
                         }
                     }
                 }
 
-                // Skip if we couldn't find a name
                 if (!name || name.length < 2) return;
 
+                // Extract headline and connected date from <p> elements
+                let headline = null;
+                let connectedDate = null;
+                const paragraphs = card.querySelectorAll('p');
+
+                for (const p of paragraphs) {
+                    const text = p.textContent?.trim();
+                    if (!text || text.length < 3) continue;
+
+                    // Skip the name itself
+                    if (text === name) continue;
+
+                    // Connected date
+                    if (text.startsWith('Connected')) {
+                        connectedDate = text;
+                        continue;
+                    }
+
+                    // Skip UI buttons/labels
+                    if (/^(Message|Connect|Follow|Pending|Send|InMail|Remove|More)$/i.test(text)) continue;
+
+                    // Headline: longer text that's not the name
+                    if (!headline && text.length >= 5 && text.length <= 250) {
+                        // Make sure it's not the name + headline concatenated
+                        if (!text.startsWith(name)) {
+                            headline = text;
+                        }
+                    }
+                }
+
                 // Extract profile image
-                const img = card.querySelector('img[src*="licdn"], img[src*="profile"]');
+                const img = card.querySelector('img[src*="licdn"], img[src*="profile-displayphoto"]');
                 const imgUrl = img?.src || null;
 
                 connections.push({
@@ -708,68 +1041,49 @@ class LinkedInConnectionExtractor:
                 });
             });
 
-            // Fallback: if no cards found via componentkey, try profile links directly
-            if (connections.length === 0) {
-                const profileLinks = searchRoot.querySelectorAll('[data-view-name="connections-profile"]');
-                const processedUrls = new Set();
-
-                profileLinks.forEach(link => {
-                    const url = link.href?.split('?')[0];
-                    if (!url || processedUrls.has(url)) return;
-                    processedUrls.add(url);
-
-                    // Walk up to find the containing card
-                    let card = link.parentElement;
-                    for (let i = 0; i < 8 && card; i++) {
-                        if (card.hasAttribute('componentkey')) break;
-                        card = card.parentElement;
-                    }
-
-                    if (!card) return;
-
-                    // Extract data similar to above
-                    let name = null;
-                    const nameLink = card.querySelector('a[href*="/in/"] p a, p a[href*="/in/"]');
-                    if (nameLink) {
-                        name = nameLink.textContent?.trim();
-                    } else {
-                        // Try aria-label
-                        const figure = card.querySelector('figure[aria-label]');
-                        if (figure) {
-                            const ariaLabel = figure.getAttribute('aria-label');
-                            if (ariaLabel?.includes("'s profile picture")) {
-                                name = ariaLabel.replace("'s profile picture", "").trim();
-                            }
-                        }
-                    }
-
-                    if (!name) return;
-
-                    let headline = null;
-                    const paragraphs = card.querySelectorAll('p');
-                    for (const p of paragraphs) {
-                        const text = p.textContent?.trim();
-                        if (!text || text === name || text.length < 10) continue;
-                        if (text.startsWith('Connected')) continue;
-                        if (/^(Message|Connect|Follow)$/i.test(text)) continue;
-                        headline = text;
-                        break;
-                    }
-
-                    const img = card.querySelector('img[src*="licdn"]');
-
-                    connections.push({
-                        name,
-                        headline,
-                        url,
-                        imgUrl: img?.src || null,
-                        connectedDate: null
-                    });
-                });
-            }
-
             return connections;
         }''')
+
+        logger.info(f"_extract_visible: JS returned {len(cards_data)} cards")
+        if len(cards_data) > 0:
+            logger.info(f"Extracted {len(cards_data)} visible connections (sample: {cards_data[0].get('name', '?')})")
+        else:
+            # Debug: check why extraction found nothing
+            try:
+                debug_info = await page.evaluate(r'''() => {
+                    const links = document.querySelectorAll('a[href*="/in/"]');
+                    const results = [];
+                    const seenUrls = new Set();
+                    for (const link of links) {
+                        const url = link.href?.split('?')[0];
+                        if (!url || !url.includes('/in/') || seenUrls.has(url)) continue;
+                        seenUrls.add(url);
+                        // Walk up to find componentkey
+                        let el = link;
+                        let depth = 0;
+                        let foundKey = null;
+                        for (let i = 0; i < 20 && el; i++) {
+                            if (el.hasAttribute && el.hasAttribute('componentkey')) {
+                                foundKey = el.getAttribute('componentkey');
+                                depth = i;
+                                break;
+                            }
+                            el = el.parentElement;
+                        }
+                        results.push({
+                            url: url.substring(url.lastIndexOf('/in/')),
+                            text: link.textContent?.trim().substring(0, 30),
+                            parentTag: link.parentElement?.tagName,
+                            compkeyDepth: foundKey ? depth : -1,
+                            compkey: foundKey?.substring(0, 20),
+                        });
+                        if (results.length >= 5) break;
+                    }
+                    return results;
+                }''')
+                logger.info(f"  Debug card walk-up: {debug_info}")
+            except Exception:
+                pass
 
         connections = []
         for card_data in cards_data:
@@ -847,7 +1161,7 @@ class LinkedInConnectionExtractor:
         url = page.url
         if '/login' in url or '/checkpoint' in url:
             return False
-        if '/mynetwork' in url or '/feed' in url:
+        if any(segment in url for segment in ('/mynetwork', '/feed', '/connections', '/in/')):
             return True
         try:
             nav = await page.locator('nav, header[role="banner"]').count()
