@@ -18,7 +18,11 @@ from typing import Any
 import docker
 import structlog
 
-from runner.config import RunnerConfig
+if __package__ in (None, ""):
+    # Support running from within the runner directory (python -m runner)
+    from config import RunnerConfig
+else:
+    from runner.config import RunnerConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +45,12 @@ class SandboxManager:
 
     def __init__(self, config: RunnerConfig):
         self.config = config
-        self.docker_client = docker.from_env()
+        try:
+            self.docker_client = docker.from_env()
+        except docker.errors.DockerException as exc:
+            raise RuntimeError(
+                "Docker daemon is not reachable. Start Docker Desktop/Engine before running the ProofHire runner."
+            ) from exc
 
     def execute(
         self,
@@ -83,7 +92,8 @@ class SandboxManager:
             # Run the container
             container = self.docker_client.containers.run(
                 image=self.config.sandbox_image,
-                command=["python", "-m", "grader", "--run-id", run_id],
+                # Image entrypoint is already `python -m grader`.
+                command=["--run-id", run_id],
                 volumes={
                     str(workspace): {"bind": "/workspace", "mode": "rw"},
                     str(Path(self.config.sims_path) / simulation_id): {

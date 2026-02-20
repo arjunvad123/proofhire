@@ -40,6 +40,18 @@ function SearchPageContent() {
   const [results, setResults] = useState<UnifiedSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastStrategyUsed, setLastStrategyUsed] = useState<'default' | 'broadened' | 'network_only'>('default');
+
+  type SearchRunOptions = {
+    queryOverride?: string;
+    includeExternal?: boolean;
+  };
+
+  const broadenSearchQuery = (query: string): string => {
+    const normalized = query.trim();
+    if (!normalized) return query;
+    return `${normalized} OR software engineer OR backend engineer OR full stack engineer`;
+  };
 
   // Get company ID from localStorage
   useEffect(() => {
@@ -88,12 +100,12 @@ function SearchPageContent() {
     }
   }, [companyId, roles, searchParams]);
 
-  const handleSearch = useCallback(async (roleId?: string) => {
+  const handleSearch = useCallback(async (roleId?: string, options: SearchRunOptions = {}) => {
     if (!companyId) return;
 
     const searchRoleId = roleId || selectedRoleId;
     const selectedRole = roles.find(r => r.id === searchRoleId);
-    const searchQuery = customQuery || selectedRole?.title;
+    const searchQuery = options.queryOverride || customQuery || selectedRole?.title;
 
     if (!searchQuery) {
       setError('Please select a role or enter a search query');
@@ -107,9 +119,19 @@ function SearchPageContent() {
       const searchResults = await unifiedSearch({
         companyId,
         roleTitle: searchQuery,
+        includeExternal: options.includeExternal ?? true,
+        includeTiming: true,
+        deepResearch: false,
         limit: 50,
       });
       setResults(searchResults);
+      if (options.includeExternal === false) {
+        setLastStrategyUsed('network_only');
+      } else if (options.queryOverride) {
+        setLastStrategyUsed('broadened');
+      } else {
+        setLastStrategyUsed('default');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
     } finally {
@@ -198,11 +220,82 @@ function SearchPageContent() {
       {/* Results */}
       {results && (
         <div className="space-y-6">
+          {results.degraded && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-amber-900">
+                    Search degraded: external yield is low
+                  </div>
+                  <div className="mt-1 text-sm text-amber-800">
+                    Decision confidence: <span className="font-medium">{results.decision_confidence.toUpperCase()}</span>
+                  </div>
+                  {results.warnings.length > 0 && (
+                    <ul className="mt-2 text-xs text-amber-800 list-disc pl-5 space-y-1">
+                      {results.warnings.slice(0, 3).map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {results.recommended_actions.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-xs font-semibold text-amber-900">Recommended Next Actions</div>
+                      <ul className="mt-1 text-xs text-amber-800 list-disc pl-5 space-y-1">
+                        {results.recommended_actions.slice(0, 4).map((action, i) => (
+                          <li key={i}>{action}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      loading={loading}
+                      onClick={async () => {
+                        const baseQuery = customQuery || roles.find(r => r.id === selectedRoleId)?.title || results.role_title;
+                        const broadened = broadenSearchQuery(baseQuery);
+                        setCustomQuery(broadened);
+                        await handleSearch(undefined, { queryOverride: broadened, includeExternal: true });
+                      }}
+                    >
+                      Retry Broadened Query
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={loading}
+                      onClick={async () => {
+                        await handleSearch(undefined, { includeExternal: false });
+                      }}
+                    >
+                      Run Network-Only Confidence Mode
+                    </Button>
+                  </div>
+                </div>
+                <div className="text-right text-xs text-amber-700">
+                  <div>Clado: {results.external_provider_health?.clado?.ok ? 'ok' : 'down'}</div>
+                  <div>PDL: {results.external_provider_health?.pdl?.ok ? 'ok' : 'down'}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Summary */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Found {results.total_found} candidates for &quot;{results.role_title}&quot;
             </h3>
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <span className="px-2 py-1 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
+                Strategy: {lastStrategyUsed === 'default' ? 'DEFAULT' : lastStrategyUsed === 'broadened' ? 'BROADENED' : 'NETWORK_ONLY'}
+              </span>
+              <span className={`px-2 py-1 rounded text-xs font-medium ${results.external_yield_ok ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                External Yield: {results.external_yield_ok ? 'OK' : 'LOW'}
+              </span>
+              <span className={`px-2 py-1 rounded text-xs font-medium ${results.decision_confidence === 'high' ? 'bg-green-100 text-green-700' : results.decision_confidence === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                Decision Confidence: {results.decision_confidence.toUpperCase()}
+              </span>
+            </div>
             <div className="grid grid-cols-3 gap-4">
               <div className="text-center p-4 bg-green-50 rounded-lg">
                 <div className="text-2xl font-bold text-green-600">{results.tier_1_network}</div>

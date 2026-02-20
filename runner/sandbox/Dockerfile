@@ -12,8 +12,8 @@ RUN pip install --no-cache-dir \
     pytest-json-report==1.5.0 \
     coverage==7.3.2
 
-# Copy grader module
-COPY grader/ /grader/
+# Copy grader package under a parent import path.
+COPY grader/ /grader/grader/
 
 # Set Python path
 ENV PYTHONPATH=/grader:/workspace/sim:/workspace

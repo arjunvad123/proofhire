@@ -92,7 +92,7 @@ export async function getRole(roleId: string) {
 
 // Applications
 export async function createApplication(roleId: string, data: ApplyData) {
-  return fetchApi<Application>(`/roles/${roleId}/apply`, {
+  return fetchApi<Application>(`/applications/roles/${roleId}/apply`, {
     method: 'POST',
     body: JSON.stringify(data),
   });

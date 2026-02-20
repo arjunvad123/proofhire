@@ -8,8 +8,13 @@ import boto3
 import httpx
 import structlog
 
-from runner.config import RunnerConfig
-from runner.sandbox import SandboxManager, SandboxResult
+if __package__ in (None, ""):
+    # Support running from within the runner directory (python -m runner)
+    from config import RunnerConfig
+    from sandbox import SandboxManager, SandboxResult
+else:
+    from runner.config import RunnerConfig
+    from runner.sandbox import SandboxManager, SandboxResult
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +54,15 @@ def handle_simulation_job(
     )
 
     if not sandbox_result.success:
+        # Always notify backend on failure so run state does not get stuck as "running".
+        notify_backend(
+            run_id=run_id,
+            success=False,
+            metrics={},
+            artifact_urls={},
+            duration_seconds=sandbox_result.duration_seconds,
+            config=config,
+        )
         return {
             "success": False,
             "error": sandbox_result.error or "Sandbox execution failed",

@@ -30,6 +30,19 @@ class BriefBuilder:
         "communication",
     ]
 
+    @staticmethod
+    def _get_run_duration_seconds(simulation_run: SimulationRun) -> float | None:
+        """Return run duration when start/end datetimes are available."""
+        started_at = getattr(simulation_run, "started_at", None)
+        finished_at = getattr(simulation_run, "finished_at", None)
+        if not isinstance(finished_at, datetime):
+            finished_at = getattr(simulation_run, "completed_at", None)
+
+        if isinstance(started_at, datetime) and isinstance(finished_at, datetime):
+            return (finished_at - started_at).total_seconds()
+
+        return None
+
     def build(
         self,
         application: Application,
@@ -108,9 +121,7 @@ class BriefBuilder:
         ]
 
         # Compute timing
-        time_to_complete = 0.0
-        if simulation_run.started_at and simulation_run.finished_at:
-            time_to_complete = (simulation_run.finished_at - simulation_run.started_at).total_seconds()
+        time_to_complete = self._get_run_duration_seconds(simulation_run) or 0.0
 
         # Gather all suggested questions
         all_questions = []
@@ -200,17 +211,16 @@ class BriefBuilder:
                         )
                     )
 
-        # Check for timeout
-        if simulation_run.finished_at and simulation_run.started_at:
-            duration = (simulation_run.finished_at - simulation_run.started_at).total_seconds()
-            if duration > 3600:  # Over 1 hour
-                flags.append(
-                    RiskFlag(
-                        flag_type="long_completion_time",
-                        severity="low",
-                        description=f"Simulation took {int(duration/60)} minutes to complete",
-                    )
+        # Check for timeout/long completion
+        duration = self._get_run_duration_seconds(simulation_run)
+        if duration is not None and duration > 3600:  # Over 1 hour
+            flags.append(
+                RiskFlag(
+                    flag_type="long_completion_time",
+                    severity="low",
+                    description=f"Simulation took {int(duration/60)} minutes to complete",
                 )
+            )
 
         # Check if tests never passed
         tests_passed = False

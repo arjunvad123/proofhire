@@ -43,7 +43,7 @@ class RunnerConfig:
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             job_queue=os.getenv("JOB_QUEUE", "proofhire:jobs"),
             poll_timeout=int(os.getenv("POLL_TIMEOUT", "5")),
-            s3_endpoint=os.getenv("S3_ENDPOINT", "http://minio:9000"),
+            s3_endpoint=os.getenv("S3_ENDPOINT") or os.getenv("S3_ENDPOINT_URL", "http://minio:9000"),
             s3_bucket=os.getenv("S3_BUCKET", "proofhire-artifacts"),
             s3_access_key=os.getenv("S3_ACCESS_KEY", "minioadmin"),
             s3_secret_key=os.getenv("S3_SECRET_KEY", "minioadmin"),

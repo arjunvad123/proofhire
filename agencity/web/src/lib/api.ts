@@ -502,7 +502,20 @@ export async function getActivationRequests(
   companyId: string,
   roleTitle: string
 ): Promise<ActivationRequest[]> {
-  return request(`/v3/activate/reverse-reference?company_id=${companyId}&role_title=${encodeURIComponent(roleTitle)}&limit=20`);
+  const response = await request<{
+    requests: ActivationRequest[];
+  }>('/v3/activate/reverse-reference', {
+    method: 'POST',
+    body: JSON.stringify({
+      company_id: companyId,
+      role_title: roleTitle,
+      required_skills: [],
+      limit: 20,
+      save_to_db: false,
+    }),
+  });
+
+  return response.requests || [];
 }
 
 export async function getDailyDigest(companyId: string): Promise<{
@@ -575,6 +588,19 @@ export interface UnifiedSearchResponse {
   timing_enabled: boolean;
   research_enabled: boolean;
   deep_researched: number;
+  external_yield_ok: boolean;
+  external_provider_stats: Record<string, number>;
+  external_provider_health: Record<string, {
+    provider: string;
+    ok: boolean;
+    status_code?: number;
+    reason?: string;
+  }>;
+  external_diagnostics: string[];
+  warnings: string[];
+  degraded: boolean;
+  decision_confidence: 'high' | 'medium' | 'low';
+  recommended_actions: string[];
 
   candidates: UnifiedCandidate[];
 }
@@ -927,7 +953,7 @@ export async function getCurationCacheStatus(
     last_curated_at?: string;
   }>;
 }> {
-  return request(`/curation/cache/status/${companyId}`);
+  return request(`/curation/cache-status/${companyId}`);
 }
 
 export async function getCandidateContext(
@@ -1042,7 +1068,7 @@ export async function updateCandidateStatus(
 export async function recordFeedback(feedback: {
   company_id: string;
   candidate_id: string;
-  action: 'hired' | 'interviewed' | 'contacted' | 'saved' | 'rejected' | 'ignored';
+  action: 'hired' | 'interviewed' | 'contacted' | 'saved' | 'viewed' | 'rejected' | 'ignored';
   search_id?: string;
   notes?: string;
   metadata?: any;
@@ -1055,5 +1081,58 @@ export async function recordFeedback(feedback: {
     method: 'POST',
     body: JSON.stringify(feedback),
   });
+}
+
+export interface ProofHireInviteResponse {
+  linkage_id: string;
+  candidate_id: string;
+  proofhire_application_id: string;
+  proofhire_role_id: string;
+  status: string;
+}
+
+export async function inviteCandidateToProofHire(payload: {
+  company_id: string;
+  candidate_id: string;
+  proofhire_role_id: string;
+  search_id?: string;
+}): Promise<ProofHireInviteResponse> {
+  return request('/proofhire/invite', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface ProviderHealth {
+  provider: string;
+  ok: boolean;
+  status_code?: number;
+  reason?: string;
+}
+
+export async function getExternalProvidersHealth(): Promise<{
+  ok: boolean;
+  providers: ProviderHealth[];
+}> {
+  return request('/providers/health');
+}
+
+export async function getProofHireDecisionPacket(
+  proofhireApplicationId: string
+): Promise<{
+  linkage: {
+    id: string;
+    company_id: string;
+    agencity_candidate_id: string;
+    proofhire_application_id: string;
+    proofhire_role_id: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  };
+  candidate: Record<string, unknown>;
+  feedback: Array<Record<string, unknown>>;
+}> {
+  return request(`/proofhire/decision-packet/${proofhireApplicationId}`);
 }
 

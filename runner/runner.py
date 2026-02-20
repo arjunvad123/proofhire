@@ -12,9 +12,15 @@ from typing import Any
 import redis
 import structlog
 
-from runner.config import RunnerConfig
-from runner.job_handlers import handle_simulation_job
-from runner.sandbox import SandboxManager
+if __package__ in (None, ""):
+    # Support running from within the runner directory (python -m runner)
+    from config import RunnerConfig
+    from job_handlers import handle_simulation_job
+    from sandbox import SandboxManager
+else:
+    from runner.config import RunnerConfig
+    from runner.job_handlers import handle_simulation_job
+    from runner.sandbox import SandboxManager
 
 logger = structlog.get_logger(__name__)
 
