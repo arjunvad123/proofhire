@@ -32,9 +32,13 @@ class LinkedInConnectionExtractor:
     # LinkedIn loads approximately 50 connections per scroll
     CONNECTIONS_PER_SCROLL = 50
 
-    # Scroll delays (seconds)
-    MIN_SCROLL_DELAY = 1.0
-    MAX_SCROLL_DELAY = 3.0
+    # Scroll delays (seconds) - intentionally slow and methodical
+    MIN_SCROLL_DELAY = 2.5
+    MAX_SCROLL_DELAY = 5.0
+
+    # Reading pause - simulate actually looking at connections
+    MIN_READ_PAUSE = 1.0
+    MAX_READ_PAUSE = 3.0
 
     def __init__(self, session_manager: LinkedInSessionManager):
         """
@@ -92,8 +96,17 @@ class LinkedInConnectionExtractor:
             ) as sb:
                 # Add cookies if not already in persistent profile
                 current_cookies = await sb.context.cookies()
-                if not any(c['name'] == 'li_at' for c in current_cookies):
+                has_li_at = any(c['name'] == 'li_at' for c in current_cookies)
+                logger.info(f"Browser profile has li_at: {has_li_at}, existing cookies: {len(current_cookies)}")
+
+                if not has_li_at:
+                    logger.info(f"Injecting {len(cookies)} cookies from session")
                     await self._add_session_cookies(sb.context, cookies)
+
+                    # Verify injection
+                    after_cookies = await sb.context.cookies()
+                    has_li_at_after = any(c['name'] == 'li_at' for c in after_cookies)
+                    logger.info(f"After injection: li_at present: {has_li_at_after}, total: {len(after_cookies)}")
 
                 page = await sb.new_page()
 
@@ -305,6 +318,12 @@ class LinkedInConnectionExtractor:
         """
         Extract all connections by scrolling through the list.
 
+        Uses intelligent pagination:
+        - Detects total connection count from page header
+        - Waits for new content after each scroll
+        - Handles LinkedIn's lazy loading
+        - Natural scrolling with ghost cursor
+
         Args:
             page: Playwright page
             session_id: Session ID for warning checks
@@ -316,6 +335,11 @@ class LinkedInConnectionExtractor:
         connections = []
         seen_urls = set()
         no_new_count = 0
+
+        # Try to get total connection count from page
+        total_count = await self._get_total_connection_count(page)
+        if total_count:
+            logger.info(f"Total connections detected: {total_count}")
 
         while True:
             # Check if should take break
@@ -341,33 +365,116 @@ class LinkedInConnectionExtractor:
                     seen_urls.add(url)
                     new_connections += 1
 
-            # Progress callback
+            # Progress callback with estimated total
             if progress_callback:
-                await progress_callback(len(connections), len(connections) + 500)
+                estimated_total = total_count if total_count else len(connections) + 500
+                await progress_callback(len(connections), estimated_total)
 
-            # Check if we've reached the end
+            # Check if we've extracted all connections
+            if total_count and len(connections) >= total_count:
+                logger.info(f"Reached total count: {len(connections)}/{total_count}")
+                break
+
+            # Check if we've reached the end (no new connections after scrolling)
             if new_connections == 0:
                 no_new_count += 1
                 if no_new_count >= 3:  # No new connections in 3 scrolls
+                    logger.info("No new connections after 3 scrolls — assuming end of list")
                     break
             else:
                 no_new_count = 0
 
-            # Scroll down with human-like delay
+            # Simulate reading the visible connections before scrolling
+            # A real user spends time looking at names/titles
+            reading_time = random.uniform(self.MIN_READ_PAUSE, self.MAX_READ_PAUSE)
+            await asyncio.sleep(reading_time)
+
+            # Scroll down with human-like behavior (multiple small scrolls)
             await self._scroll_connections_page(page)
 
-            # Human-like delay between scrolls
+            # Wait for new content to load (LinkedIn lazy loads)
+            await self._wait_for_new_content(page, len(seen_urls))
+
+            # Human-like delay between scroll sessions
             delay = random.uniform(self.MIN_SCROLL_DELAY, self.MAX_SCROLL_DELAY)
             await asyncio.sleep(delay)
 
-            # Occasional variation: scroll back up slightly (re-reading) — 10%
-            if random.random() < 0.1:
+            # Occasional variation: scroll back up slightly (re-reading) — 15%
+            if random.random() < 0.15:
                 cursor = GhostCursor(page)
-                await cursor.scroll(-200)
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await cursor.scroll(random.randint(-150, -250))
+                await asyncio.sleep(random.uniform(1.0, 2.5))
+
+            # Occasional longer pause (checking phone, thinking) — 5%
+            if random.random() < 0.05:
+                logger.debug("Taking a brief pause (simulating distraction)")
+                await asyncio.sleep(random.uniform(5.0, 10.0))
 
         logger.info(f"Extraction complete: {len(connections)} connections found")
         return connections
+
+    async def _get_total_connection_count(self, page: Page) -> Optional[int]:
+        """
+        Extract total connection count from the page header.
+
+        LinkedIn displays "X connections" at the top of the connections page.
+        """
+        try:
+            count_text = await page.evaluate(r'''() => {
+                // Look for text like "500 connections" or "1,234 Connections"
+                const selectors = [
+                    'h1',
+                    '[class*="header"]',
+                    '[class*="count"]',
+                    'span',
+                    'p'
+                ];
+
+                for (const selector of selectors) {
+                    const elements = document.querySelectorAll(selector);
+                    for (const el of elements) {
+                        const text = el.textContent?.trim() || '';
+                        // Match patterns like "500 connections" or "1,234 Connections"
+                        const match = text.match(/^([\d,]+)\s*connections?$/i);
+                        if (match) {
+                            return match[1].replace(/,/g, '');
+                        }
+                    }
+                }
+                return null;
+            }''')
+
+            if count_text:
+                return int(count_text)
+        except Exception as e:
+            logger.debug(f"Could not extract total count: {e}")
+
+        return None
+
+    async def _wait_for_new_content(self, page: Page, previous_count: int) -> None:
+        """
+        Wait for new connection cards to load after scrolling.
+
+        LinkedIn lazy-loads ~50 connections per scroll. We wait up to 5 seconds
+        for new content to appear.
+        """
+        for _ in range(10):
+            current_count = await page.evaluate(r'''() => {
+                const cards = document.querySelectorAll('[componentkey^="auto-component-"]');
+                const urls = new Set();
+                cards.forEach(card => {
+                    const link = card.querySelector('a[href*="/in/"]');
+                    if (link) urls.add(link.href);
+                });
+                return urls.size;
+            }''')
+
+            if current_count > previous_count:
+                return
+
+            await asyncio.sleep(0.5)
+
+        # Timeout — continue anyway
 
     async def _wait_for_connections_to_load(self, page: Page) -> None:
         """
@@ -623,9 +730,26 @@ class LinkedInConnectionExtractor:
         return occupation.strip(), None
 
     async def _scroll_connections_page(self, page: Page) -> None:
-        """Scroll the connections page using mouse-wheel events (not scrollBy)."""
+        """
+        Scroll the connections page using mouse-wheel events.
+
+        Uses multiple small scrolls instead of one big jump to appear more natural.
+        A real user scrolls in increments, pausing to read.
+        """
         cursor = GhostCursor(page)
-        await cursor.scroll(random.randint(800, 1200))
+
+        # Break the scroll into 2-4 smaller increments
+        num_scrolls = random.randint(2, 4)
+        total_distance = random.randint(600, 900)  # Smaller total distance
+        distance_per_scroll = total_distance // num_scrolls
+
+        for i in range(num_scrolls):
+            # Each small scroll
+            await cursor.scroll(distance_per_scroll + random.randint(-50, 50))
+
+            # Brief pause between small scrolls (simulating reading)
+            if i < num_scrolls - 1:
+                await asyncio.sleep(random.uniform(self.MIN_READ_PAUSE, self.MAX_READ_PAUSE))
 
     async def _is_logged_in(self, page: Page) -> bool:
         """Check if user is logged in (not redirected to login/checkpoint)."""

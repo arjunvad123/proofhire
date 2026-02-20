@@ -74,3 +74,4 @@ extract_*.py
 find_*.py
 get_*.py
 inspect_*.py
+browser_profiles/
