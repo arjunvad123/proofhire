@@ -259,7 +259,7 @@ Updated `connection_extractor.py` to use stable DOM attributes instead of obfusc
 1. **Error Handling**
    - Handle network failures gracefully
    - Retry logic for transient errors
-   - Alert system for persistent failures
+   - Alert system 1 persistent failures
 
 2. **Rate Limiting**
    - Enforce max connections per hour/day
@@ -430,7 +430,7 @@ CREATE TABLE linkedin_sessions (
 2. **Secure Storage**: ✅ Using Supabase
 3. **Session Expiry**: ✅ 30 days
 4. **RLS Policies**: ✅ Enabled
-5. **Proxy Usage**: ✅ Implemented (SmartProxy + BrightData, sticky sessions, geo-targeting)
+5. **Proxy Usage**: ✅ Implemented (Decodo (formerly SmartProxy) + BrightData, sticky sessions, geo-targeting)
 
 ---
 
@@ -440,10 +440,12 @@ CREATE TABLE linkedin_sessions (
 
 | Provider | Pay-as-you-go | Starter | Growth | Enterprise |
 |---|---|---|---|---|
-| **SmartProxy** | ~$12/GB | $30/mo (2 GB = $15/GB) | $80/mo (8 GB = $10/GB) | ~$5–7/GB |
+| **Decodo** (formerly SmartProxy) | **from $1.5/GB** | Custom plans available | Custom plans available | Custom pricing |
 | **BrightData** | ~$15/GB | $500/mo (~$10.50/GB) | Custom (~$8/GB) | ~$5/GB |
 
-> **Recommendation**: SmartProxy Growth plan ($10/GB) for early stage. Switch to enterprise at 50+ active users.
+> **Update**: SmartProxy has rebranded to [Decodo](https://decodo.com). No setup changes needed - endpoints and authentication remain the same.
+> 
+> **Recommendation**: Decodo pay-as-you-go ($1.5/GB) is now the most cost-effective option. Free trial: 3 days, 100MB.
 
 ---
 
@@ -461,8 +463,8 @@ CREATE TABLE linkedin_sessions (
 | Metric | Value |
 |---|---|
 | Bandwidth per auth | ~0.0035 GB |
-| **Proxy cost @ $10/GB** | **$0.035** |
-| **Proxy cost @ $7/GB** | **$0.025** |
+| **Proxy cost @ $1.5/GB (Decodo)** | **$0.005** |
+| **Proxy cost @ $7/GB (Enterprise)** | **$0.025** |
 
 ---
 
@@ -478,17 +480,17 @@ LinkedIn loads ~50 connections per scroll. The extraction follows a natural navi
 | 3,000 | 3 | ~60 | ~6 MB | ~21 MB | **~27 MB** |
 | 5,000 | 3 | ~100 | ~6 MB | ~35 MB | **~41 MB** |
 
-| Avg User (500 conn.) | @ $10/GB | @ $7/GB |
+| Avg User (500 conn.) | @ $1.5/GB (Decodo) | @ $7/GB (Enterprise) |
 |---|---|---|
-| Bandwidth: ~0.01 GB | **$0.10** | **$0.07** |
+| Bandwidth: ~0.01 GB | **$0.015** | **$0.07** |
 
-| Power User (3,000 conn.) | @ $10/GB | @ $7/GB |
+| Power User (3,000 conn.) | @ $1.5/GB (Decodo) | @ $7/GB (Enterprise) |
 |---|---|---|
-| Bandwidth: ~0.027 GB | **$0.27** | **$0.19** |
+| Bandwidth: ~0.027 GB | **$0.041** | **$0.19** |
 
-| Max User (5,000 conn.) | @ $10/GB | @ $7/GB |
+| Max User (5,000 conn.) | @ $1.5/GB (Decodo) | @ $7/GB (Enterprise) |
 |---|---|---|
-| Bandwidth: ~0.041 GB | **$0.41** | **$0.29** |
+| Bandwidth: ~0.041 GB | **$0.062** | **$0.29** |
 
 ---
 
@@ -523,21 +525,21 @@ No proxy needed — pure API call.
 
 | Cost Item | Amount |
 |---|---|
-| Authentication (proxy) | $0.035 |
-| Connection extraction (proxy) | $0.10 |
+| Authentication (proxy @ $1.5/GB) | $0.005 |
+| Connection extraction (proxy @ $1.5/GB) | $0.015 |
 | PDL enrichment (top 5) | $0.50 |
 | AI/LLM curation | $0.04 |
-| **Total onboarding cost** | **$0.68** |
+| **Total onboarding cost** | **$0.57** |
 
 **Scenario: Power user, 3,000 connections, 3 roles**
 
 | Cost Item | Amount |
 |---|---|
-| Authentication (proxy) | $0.035 |
-| Connection extraction (proxy) | $0.27 |
+| Authentication (proxy @ $1.5/GB) | $0.005 |
+| Connection extraction (proxy @ $1.5/GB) | $0.041 |
 | PDL enrichment (15 unique, ~10 cached) | $0.50 |
 | AI/LLM curation (×3) | $0.12 |
-| **Total onboarding cost** | **$0.93** |
+| **Total onboarding cost** | **$0.67** |
 
 ---
 
@@ -547,34 +549,34 @@ After onboarding, recurring costs are minimal:
 
 | Item | Monthly Cost | Trigger |
 |---|---|---|
-| Session refresh (re-auth) | $0.035 | Every 30 days |
-| Incremental extraction | ~$0.02 | New connections since last run |
+| Session refresh (re-auth @ $1.5/GB) | $0.005 | Every 30 days |
+| Incremental extraction (@ $1.5/GB) | ~$0.003 | New connections since last run |
 | New role curation | ~$0.54 | Per new role |
-| **Idle user (no new roles)** | **~$0.06/mo** | |
-| **Active user (2 roles/mo)** | **~$1.14/mo** | |
+| **Idle user (no new roles)** | **~$0.01/mo** | |
+| **Active user (2 roles/mo)** | **~$1.09/mo** | |
 
 ---
 
 ### 📈 Scaling Projections (Monthly)
 
-| Active Users | Proxy GB/mo | Proxy Cost | PDL Cost | AI Cost | **Total/mo** |
+| Active Users | Proxy GB/mo | Proxy Cost @ $1.5/GB | PDL Cost | AI Cost | **Total/mo** |
 |---|---|---|---|---|---|
-| 10 | ~0.15 GB | $1.50 | $5.00 | $0.40 | **$6.90** |
-| 50 | ~0.75 GB | $7.50 | $25.00 | $2.00 | **$34.50** |
-| 100 | ~1.5 GB | $15.00 | $50.00 | $4.00 | **$69.00** |
-| 500 | ~7.5 GB | $52.50* | $250.00 | $20.00 | **$322.50** |
-| 1,000 | ~15 GB | $90.00* | $500.00 | $40.00 | **$630.00** |
+| 10 | ~0.15 GB | **$0.23** | $5.00 | $0.40 | **$5.63** |
+| 50 | ~0.75 GB | **$1.13** | $25.00 | $2.00 | **$28.13** |
+| 100 | ~1.5 GB | **$2.25** | $50.00 | $4.00 | **$56.25** |
+| 500 | ~7.5 GB | **$11.25** | $250.00 | $20.00 | **$281.25** |
+| 1,000 | ~15 GB | **$22.50** | $500.00 | $40.00 | **$562.50** |
 
-*Enterprise pricing at $7/GB kicks in above ~25 GB/mo.
+> **Note**: With Decodo's new pricing ($1.5/GB), proxy costs are now **85% lower** than previous estimates!
 
 ---
 
 ### 🎯 Key Takeaways
 
-1. **Proxy cost is negligible** — < $0.30/user for onboarding. The PDL enrichment ($0.10/call) is the dominant variable cost.
+1. **Proxy cost is now minimal** — < $0.06/user for onboarding with Decodo ($1.5/GB). The PDL enrichment ($0.10/call) is the dominant variable cost.
 2. **Sticky sessions save money** — Same IP reuse means no wasted auth retries. One auth = one login email = one proxy session.
 3. **30-day PDL cache is critical** — Without it, enrichment costs would be 3–5× higher for multi-role companies.
-4. **Break-even**: At $50/mo SaaS pricing, break-even is ~1 user per month. At scale (100 users), COGS is ~$0.69/user/mo = **98.6% gross margin**.
+4. **Break-even**: At $50/mo SaaS pricing, break-even is ~1 user per month. At scale (100 users), COGS is ~$0.56/user/mo = **98.9% gross margin**.
 
 ---
 

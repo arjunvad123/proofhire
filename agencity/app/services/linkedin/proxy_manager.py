@@ -2,14 +2,15 @@
 Residential proxy management for LinkedIn automation.
 
 Handles:
-- Proxy pool management with SmartProxy and BrightData
+- Proxy pool management with Decodo (formerly SmartProxy) and BrightData
 - Location-based geo-targeting (country/state)
 - Sticky sessions — same user_id always gets same IP
 - Proxy health checking
 - Graceful fallback when no proxy is configured
 
 Proxy credentials are read from environment variables via app.config:
-    PROXY_PROVIDER   — "smartproxy" or "brightdata"
+    PROXY_PROVIDER   — "smartproxy" (Decodo) or "brightdata"
+    PROXY_API_KEY    — Decodo API key (optional, alternative to username/password)
     PROXY_USERNAME   — base username from the provider dashboard
     PROXY_PASSWORD   — password from the provider dashboard
 """
@@ -30,7 +31,8 @@ logger = logging.getLogger(__name__)
 # Provider-specific constants
 # ---------------------------------------------------------------------------
 
-# SmartProxy residential endpoints
+# Decodo (formerly SmartProxy) residential endpoints
+# Note: Endpoints remain the same after rebrand - no setup changes needed
 SMARTPROXY_HOST = "gate.smartproxy.com"
 SMARTPROXY_PORT = 7000
 
@@ -132,6 +134,7 @@ class ProxyManager:
     def __init__(self):
         """Initialize proxy manager from settings."""
         self.provider: str = (settings.proxy_provider or "").strip().lower()
+        self.api_key: str = (settings.proxy_api_key or "").strip()
         self.username: str = (settings.proxy_username or "").strip()
         self.password: str = (settings.proxy_password or "").strip()
 
@@ -142,6 +145,10 @@ class ProxyManager:
     @property
     def is_configured(self) -> bool:
         """Return True if proxy credentials are present."""
+        # SmartProxy can use either API key OR username/password
+        if self.provider == "smartproxy":
+            return bool(self.api_key or (self.username and self.password))
+        # BrightData requires username/password
         return bool(self.provider and self.username and self.password)
 
     def get_proxy_for_location(
@@ -175,18 +182,22 @@ class ProxyManager:
         if self.provider == "smartproxy":
             full_username = self._smartproxy_username(country, us_state, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
+            # If using API key, password can be empty or use API key as password
+            proxy_password = self.api_key if self.api_key else self.password
         elif self.provider == "brightdata":
             full_username = self._brightdata_username(country, us_state, sticky_session_id)
             server = f"http://{BRIGHTDATA_HOST}:{BRIGHTDATA_PORT}"
+            proxy_password = self.password
         else:
             logger.warning(f"Unknown proxy provider '{self.provider}', falling back to smartproxy format")
             full_username = self._smartproxy_username(country, us_state, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
+            proxy_password = self.api_key if self.api_key else self.password
 
         proxy = {
             "server": server,
             "username": full_username,
-            "password": self.password,
+            "password": proxy_password,
         }
 
         logger.info(
@@ -219,17 +230,20 @@ class ProxyManager:
         if self.provider == "smartproxy":
             full_username = self._smartproxy_username(proxy_location, None, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
+            proxy_password = self.api_key if self.api_key else self.password
         elif self.provider == "brightdata":
             full_username = self._brightdata_username(proxy_location, None, sticky_session_id)
             server = f"http://{BRIGHTDATA_HOST}:{BRIGHTDATA_PORT}"
+            proxy_password = self.password
         else:
             full_username = self._smartproxy_username(proxy_location, None, sticky_session_id)
             server = f"http://{SMARTPROXY_HOST}:{SMARTPROXY_PORT}"
+            proxy_password = self.api_key if self.api_key else self.password
 
         return {
             "server": server,
             "username": full_username,
-            "password": self.password,
+            "password": proxy_password,
         }
 
     async def check_proxy_health(self, proxy: Dict[str, str]) -> Dict[str, any]:
@@ -300,14 +314,28 @@ class ProxyManager:
         sticky_session_id: Optional[str],
     ) -> str:
         """
-        Build SmartProxy username with geo-targeting and sticky session.
+        Build Decodo (formerly SmartProxy) username with geo-targeting and sticky session.
 
-        SmartProxy format:
+        Decodo supports two authentication methods:
+        1. API Key: Use API key directly (if provided)
+        2. Username/Password: Build username with parameters
+
+        Username format (when using username/password):
             user-{base_username}-country-{cc}[-state-{st}][-session-{id}]
 
-        Docs: https://dashboard.smartproxy.com/residential-proxies/proxy-setup
+        API Key format (when using API key):
+            {api_key}-country-{cc}[-state-{st}][-session-{id}]
+
+        Docs: https://decodo.com (formerly smartproxy.com)
+        Note: No setup changes needed after rebrand - endpoints and auth remain the same
         """
-        parts = [f"user-{self.username}", f"country-{country}"]
+        # If API key is provided, use it as the base identifier
+        if self.api_key:
+            base = self.api_key
+        else:
+            base = f"user-{self.username}"
+
+        parts = [base, f"country-{country}"]
 
         if us_state:
             parts.append(f"state-{us_state}")

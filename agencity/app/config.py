@@ -3,7 +3,7 @@ Agencity configuration.
 """
 
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore[import-untyped]
 
 # Load .env file
 load_dotenv()
@@ -11,6 +11,12 @@ load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # App
     app_env: str = "development"
@@ -90,23 +96,21 @@ class Settings(BaseSettings):
     # Residential Proxy (for LinkedIn automation)
     # Required for production. Without a proxy, your server's IP is exposed.
     #
-    # SmartProxy:  proxy_provider="smartproxy"
-    #              proxy_username="your-dashboard-username"
-    #              proxy_password="your-dashboard-password"
+    # Decodo (formerly SmartProxy):  proxy_provider="smartproxy"
+    #                                Option 1 (API Key): proxy_api_key="your-api-key"
+    #                                Option 2 (Username/Password): proxy_username="your-username", proxy_password="your-password"
+    #                                Pricing: from $1.5/GB (residential proxies)
+    #                                Free trial: 3 days, 100MB
     #
     # BrightData:  proxy_provider="brightdata"
     #              proxy_username="c_customer123-zone-residential"
     #              proxy_password="your-password"
     #
     # Leave all blank to connect directly (no proxy).
-    proxy_provider: str = ""  # "smartproxy" or "brightdata"
-    proxy_username: str = ""
-    proxy_password: str = ""
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    proxy_provider: str = ""  # "smartproxy" (Decodo) or "brightdata"
+    proxy_api_key: str = ""  # Decodo API key (alternative to username/password)
+    proxy_username: str = ""  # Username for proxy auth (or Decodo username if no API key)
+    proxy_password: str = ""  # Password for proxy auth
 
 
 settings = Settings()
