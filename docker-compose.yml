@@ -106,7 +106,8 @@ services:
       DATABASE_URL: postgresql://proofhire:proofhire@postgres:5432/proofhire
       BACKEND_URL: http://backend:8000
       BACKEND_API_KEY: dev-internal-key-change-in-production
-      SIMS_PATH: /app/runner/sims
+      # Docker socket mounts are evaluated on the host, so this must be a host path.
+      SIMS_PATH: ${SIMS_PATH:-./runner/sims}
       JOB_QUEUE: proofhire:jobs
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

@@ -14,7 +14,9 @@ Replaces: /v1/curation, /v2/search, /v3/search, /v3/intelligence
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.services.unified_search import unified_search, SearchResult, Candidate
+from app.config import settings
+from app.services.unified_search import Candidate
+from app.services.master_orchestrator import master_orchestrator
 
 
 router = APIRouter(prefix="/search", tags=["unified-search"])
@@ -102,6 +104,14 @@ class SearchResponse(BaseModel):
     timing_enabled: bool
     research_enabled: bool
     deep_researched: int
+    external_yield_ok: bool
+    external_provider_stats: dict
+    external_provider_health: dict
+    external_diagnostics: list[str]
+    warnings: list[str]
+    degraded: bool
+    decision_confidence: str
+    recommended_actions: list[str]
 
     # Results
     candidates: list[CandidateResponse]
@@ -130,7 +140,7 @@ def _to_response(c: Candidate) -> CandidateResponse:
         timing_urgency=c.timing_urgency,
         has_warm_path=c.warm_path is not None,
         warm_path_type=c.warm_path.path_type if c.warm_path else None,
-        warm_path_connector=c.warm_path.connector.full_name if c.warm_path else None,
+        warm_path_connector=c.warm_path.connector.full_name if c.warm_path and hasattr(c.warm_path, 'connector') and c.warm_path.connector else None,
         warm_path_relationship=c.warm_path.relationship if c.warm_path else None,
         intro_message=c.intro_message,
         why_consider=c.why_consider,
@@ -162,18 +172,29 @@ async def search(request: SearchRequest):
     Returns candidates ranked by: fit (50%) + warmth (30%) + timing (20%)
     """
     try:
-        result = await unified_search.search(
+        # Route all primary /search traffic through the master orchestrator.
+        # Map request flags to a base mode, then pass explicit overrides.
+        if request.deep_research:
+            mode = "full"
+        elif request.include_external or request.include_timing:
+            mode = "quick"
+        else:
+            mode = "network_only"
+
+        master_result = await master_orchestrator.search(
             company_id=request.company_id,
             role_title=request.role_title,
             required_skills=request.required_skills,
             preferred_skills=request.preferred_skills,
             location=request.location,
             years_experience=request.years_experience,
+            mode=mode,
             include_external=request.include_external,
             include_timing=request.include_timing,
             deep_research=request.deep_research,
             limit=request.limit
         )
+        result = master_result.search_result
 
         return SearchResponse(
             role_title=result.role_title,
@@ -190,6 +211,14 @@ async def search(request: SearchRequest):
             timing_enabled=result.timing_enabled,
             research_enabled=result.research_enabled,
             deep_researched=result.deep_researched_count,
+            external_yield_ok=result.external_yield_ok,
+            external_provider_stats=result.external_provider_stats,
+            external_provider_health=result.external_provider_health,
+            external_diagnostics=result.external_diagnostics,
+            warnings=master_result.warnings,
+            degraded=master_result.degraded,
+            decision_confidence=master_result.decision_confidence,
+            recommended_actions=master_result.recommended_actions,
             candidates=[_to_response(c) for c in result.candidates]
         )
 
@@ -231,7 +260,3 @@ async def health():
             "deep_research": bool(settings.perplexity_api_key)
         }
     }
-
-
-# Import settings for health check
-from app.config import settings

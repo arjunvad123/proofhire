@@ -109,19 +109,7 @@ async def start_simulation_run(
 
     await db.flush()
 
-    # Enqueue job to Redis
-    try:
-        r = redis.from_url(settings.redis_url)
-        job = {
-            "run_id": run.id,
-            "simulation_id": request.simulation_id,
-            "application_id": application_id,
-        }
-        await r.lpush("proofhire:jobs", json.dumps(job))
-        await r.close()
-    except Exception:
-        # Log but don't fail - runner will pick up from DB
-        pass
+    # Do not enqueue here; the runner needs submission payload from /submit.
 
     return RunResponse(
         id=run.id,
@@ -256,19 +244,28 @@ async def submit_run(
     run.status = SimulationRunStatus.RUNNING
     run.started_at = utc_now()
 
-    # Trigger grading job
+    # Trigger grading job with the submission payload the runner can execute.
     try:
         r = redis.from_url(settings.redis_url)
+        candidate_code = code_content.decode("utf-8", errors="ignore")
+        candidate_writeup = (
+            writeup_data.get("content")
+            if isinstance(writeup_data, dict) and isinstance(writeup_data.get("content"), str)
+            else json.dumps(writeup_data)
+        )
         job = {
-            "type": "grade",
+            "type": "simulation",
             "run_id": run_id,
-            "code_artifact_id": code_artifact.id,
-            "writeup_artifact_id": writeup_artifact.id,
+            "simulation_id": run.simulation_id,
+            "application_id": run.application_id,
+            "candidate_code": candidate_code,
+            "candidate_writeup": candidate_writeup,
         }
         await r.lpush("proofhire:jobs", json.dumps(job))
         await r.close()
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to enqueue job for run {run_id}: {e}")
 
     return {"status": "submitted", "run_id": run_id}
 

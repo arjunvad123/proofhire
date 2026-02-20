@@ -100,6 +100,10 @@ class MasterSearchResult(BaseModel):
     total_duration_seconds: float
     mode: str
     features_used: list[str]
+    warnings: list[str] = []
+    degraded: bool = False
+    decision_confidence: str = "high"  # high | medium | low
+    recommended_actions: list[str] = []
 
 
 # =============================================================================
@@ -143,6 +147,22 @@ class MasterOrchestrator:
         # Initialize intelligence components
         self.readiness_scorer = ReadinessScorer()
 
+    async def get_health_status(self) -> dict:
+        """Return orchestrator dependency health for ops checks."""
+        provider_health = {
+            "supabase_configured": bool(settings.supabase_url and settings.supabase_key),
+            "anthropic_configured": bool(settings.anthropic_api_key),
+            "perplexity_configured": bool(settings.perplexity_api_key),
+            "clado_configured": bool(settings.clado_api_key),
+            "pdl_configured": bool(settings.pdl_api_key),
+        }
+        return {
+            "status": "ok" if provider_health["supabase_configured"] else "degraded",
+            "reasoning_enabled": kimi_engine.enabled,
+            "rl_enabled": reward_model.enabled,
+            "providers": provider_health,
+        }
+
     async def search(
         self,
         company_id: str,
@@ -152,6 +172,9 @@ class MasterOrchestrator:
         location: Optional[str] = None,
         years_experience: Optional[int] = None,
         mode: str = "full",  # "full", "quick", "network_only"
+        include_external: Optional[bool] = None,
+        include_timing: Optional[bool] = None,
+        deep_research: Optional[bool] = None,
         limit: int = 20,
         user_id: Optional[str] = None,  # For feedback tracking
         role_id: Optional[str] = None
@@ -181,6 +204,8 @@ class MasterOrchestrator:
         print(f"MASTER ORCHESTRATOR: {role_title}")
         print(f"Mode: {mode}")
         print(f"{'='*60}")
+        warnings: list[str] = []
+        degraded = False
 
         # Step 1: Query Reasoning (if enabled)
         query_reasoning = None
@@ -217,13 +242,19 @@ class MasterOrchestrator:
             preferred_skills=preferred_skills,
             location=location,
             years_experience=years_experience,
-            include_external=(mode != "network_only"),
-            include_timing=(mode in ["full", "quick"]),
-            deep_research=(mode == "full"),
+            include_external=(mode != "network_only") if include_external is None else include_external,
+            include_timing=(mode in ["full", "quick"]) if include_timing is None else include_timing,
+            deep_research=(mode == "full") if deep_research is None else deep_research,
             limit=limit * 2  # Get extra for RL filtering
         )
 
         print(f"   Found {search_result.total_found} candidates")
+        if include_external is not False and not search_result.external_yield_ok:
+            degraded = True
+            warnings.extend(search_result.external_diagnostics)
+            warnings.append(
+                "External providers produced no candidates; rankings are currently network-dominant."
+            )
 
         # Step 3: Gather Intelligence Signals
         print("\n3. Intelligence Signals...")
@@ -276,7 +307,8 @@ class MasterOrchestrator:
                 candidates=candidates_dicts,
                 context={
                     "company_id": company_id,
-                    "role_title": role_title
+                    "role_title": role_title,
+                    "role_id": role_id
                 }
             )
 
@@ -317,6 +349,33 @@ class MasterOrchestrator:
         print(f"Features: {', '.join(features_used)}")
         print(f"{'='*60}\n")
 
+        if warnings:
+            logger.warning("Master orchestrator warnings: %s", warnings)
+
+        decision_confidence = "high"
+        if degraded and len(search_result.candidates) < max(5, limit // 2):
+            decision_confidence = "low"
+        elif degraded:
+            decision_confidence = "medium"
+
+        recommended_actions: list[str] = []
+        if degraded:
+            recommended_actions.extend(
+                [
+                    "Prioritize Tier 1 network candidates for immediate outreach while external yield recovers.",
+                    "Broaden role query terms (titles + adjacent skills) and re-run search in quick mode.",
+                    "Re-run external search after provider budget/credits reset or limits are increased.",
+                ]
+            )
+            if search_result.tier_2_count == 0:
+                recommended_actions.append(
+                    "Trigger warm-path generation from top network companies/schools to create Tier 2 options."
+                )
+        else:
+            recommended_actions.append(
+                "Proceed with top ranked candidates and log feedback actions to improve ranking quality."
+            )
+
         return MasterSearchResult(
             search_result=search_result,
             intelligence=intelligence,
@@ -327,7 +386,11 @@ class MasterOrchestrator:
             rl_adjusted=rl_adjusted,
             total_duration_seconds=round(duration, 2),
             mode=mode,
-            features_used=features_used
+            features_used=features_used,
+            warnings=warnings,
+            degraded=degraded,
+            decision_confidence=decision_confidence,
+            recommended_actions=recommended_actions,
         )
 
     async def _gather_intelligence(
