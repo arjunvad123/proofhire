@@ -4,6 +4,7 @@ API endpoints for candidate curation.
 
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
+from app.auth import CompanyAuth, get_current_company
 from app.models.curation import (
     CurationRequest,
     CurationResponse,
@@ -26,7 +27,8 @@ def get_curation_engine():
 @router.post("/curate", response_model=CurationResponse)
 async def curate_candidates(
     request: CurationRequest,
-    engine: CandidateCurationEngine = Depends(get_curation_engine)
+    auth: CompanyAuth = Depends(get_current_company),
+    engine: CandidateCurationEngine = Depends(get_curation_engine),
 ):
     """
     Curate shortlist of candidates for a role.
@@ -72,8 +74,8 @@ async def curate_candidates(
 
     import time
     start_time = time.time()
+    request.company_id = auth.company_id
     try:
-        # Run curation
         shortlist = await engine.curate(
             company_id=request.company_id,
             role_id=request.role_id,
@@ -123,7 +125,8 @@ async def curate_candidates(
 async def get_candidate_context(
     person_id: str,
     role_id: str,
-    engine: CandidateCurationEngine = Depends(get_curation_engine)
+    auth: CompanyAuth = Depends(get_current_company),
+    engine: CandidateCurationEngine = Depends(get_curation_engine),
 ):
     """
     Get detailed context for a specific candidate.
@@ -176,7 +179,8 @@ async def record_founder_feedback(
     person_id: str,
     role_id: str,
     decision: str,  # "interview", "pass", "need_more_info"
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Record founder's decision on a candidate.
@@ -216,7 +220,8 @@ async def record_founder_feedback(
 async def regenerate_ai_summary(
     person_id: str,
     role_id: str,
-    engine: CandidateCurationEngine = Depends(get_curation_engine)
+    auth: CompanyAuth = Depends(get_current_company),
+    engine: CandidateCurationEngine = Depends(get_curation_engine),
 ):
     """
     Regenerate AI summary for a candidate without re-enriching.

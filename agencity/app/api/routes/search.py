@@ -8,9 +8,10 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.auth import CompanyAuth, get_current_company
 from app.search.engine import SearchEngine
 from app.search.models import SearchTarget
 
@@ -72,7 +73,8 @@ class SearchResponse(BaseModel):
 @router.post("/companies/{company_id}/search", response_model=SearchResponse)
 async def search_candidates(
     company_id: UUID,
-    request: SearchRequest
+    request: SearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Search for candidates using the company's network as pathways.
@@ -147,6 +149,7 @@ async def explain_search(
     required_skills: str = Query("", description="Comma-separated skills"),
     preferred_backgrounds: str = Query("", description="Comma-separated backgrounds"),
     top_k: int = Query(10, description="Number of pathways to explain"),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Explain how a search would work without executing it.
@@ -186,7 +189,10 @@ async def explain_search(
 
 
 @router.get("/companies/{company_id}/network/stats")
-async def get_network_stats(company_id: UUID):
+async def get_network_stats(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get statistics about the company's network.
 
@@ -217,6 +223,7 @@ async def get_top_gateways(
     company_id: UUID,
     n: int = Query(20, description="Number of gateways to return"),
     node_type: Optional[str] = Query(None, description="Filter by node type"),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Get the top gateway nodes in the network.

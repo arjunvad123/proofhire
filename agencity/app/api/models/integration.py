@@ -34,7 +34,7 @@ class FeedbackAction(str, Enum):
 
 class CreateLinkageRequest(BaseModel):
     """Request to create a new candidate linkage."""
-    company_id: str = Field(..., description="Company UUID")
+    company_id: Optional[str] = Field(None, description="Company UUID - injected from auth")
     agencity_candidate_id: str = Field(..., description="Agencity candidate UUID")
     agencity_search_id: Optional[str] = Field(None, description="Optional search UUID")
     proofhire_application_id: str = Field(..., description="ProofHire application ID")
@@ -104,7 +104,7 @@ class LinkagesListResponse(BaseModel):
 
 class RecordFeedbackRequest(BaseModel):
     """Request to record feedback action."""
-    company_id: str = Field(..., description="Company UUID")
+    company_id: Optional[str] = Field(None, description="Company UUID - injected from auth")
     candidate_id: str = Field(..., description="Candidate UUID")
     search_id: Optional[str] = Field(None, description="Optional search UUID")
     action: FeedbackAction = Field(..., description="Feedback action")
@@ -267,7 +267,7 @@ class CacheStatusResponse(BaseModel):
 
 class InviteToProofHireRequest(BaseModel):
     """Request to create/link a ProofHire application for a candidate."""
-    company_id: str = Field(..., description="Company UUID")
+    company_id: Optional[str] = Field(None, description="Company UUID - injected from auth")
     candidate_id: str = Field(..., description="Agencity candidate UUID")
     proofhire_role_id: str = Field(..., description="ProofHire role ID")
     search_id: Optional[str] = Field(None, description="Optional search UUID")

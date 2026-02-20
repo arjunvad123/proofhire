@@ -8,9 +8,10 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
+from app.auth import CompanyAuth, get_current_company, create_api_key
 from app.models.company import (
     Company,
     CompanyCreate,
@@ -74,12 +75,21 @@ class CreateRoleRequest(BaseModel):
 # COMPANY ENDPOINTS
 # =============================================================================
 
-@router.post("", response_model=Company)
+class SignupResponse(BaseModel):
+    """Response from company signup."""
+    company: Company
+    api_key: str           # Raw key, shown only once
+    api_key_prefix: str    # For reference
+    next_steps: list[str]
+
+
+@router.post("")
 async def create_company(request: CreateCompanyRequest):
     """
     Create a new company and start onboarding.
 
-    This is the first step of Stage 0.
+    Returns the company and a one-time API key.
+    Save the API key — it cannot be retrieved again.
     """
     try:
         from app.models.company import CompanyStage
@@ -106,7 +116,23 @@ async def create_company(request: CreateCompanyRequest):
 
         logger.info(f"Created company: {company.id} - {company.name}")
 
-        return company
+        # Generate API key
+        raw_key, key_record = await create_api_key(
+            company_id=str(company.id),
+            name="default",
+        )
+
+        return SignupResponse(
+            company=company,
+            api_key=raw_key,
+            api_key_prefix=key_record.get("key_prefix", raw_key[:20]),
+            next_steps=[
+                f"Save your API key: {raw_key}",
+                "Set it as AGENCITY_API_KEY in your environment",
+                "Import your LinkedIn connections: POST /api/companies/{id}/import/linkedin",
+                "Start searching: POST /api/search",
+            ],
+        )
 
     except Exception as e:
         logger.error(f"Failed to create company: {e}")
@@ -114,30 +140,33 @@ async def create_company(request: CreateCompanyRequest):
 
 
 @router.get("/{company_id}", response_model=CompanyWithStats)
-async def get_company(company_id: UUID):
-    """
-    Get a company with all related data.
+async def get_company(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Get a company with all related data."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    Returns the company with UMO, roles, and import stats.
-    """
     company = await company_db.get_company_with_stats(company_id)
-
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-
     return company
 
 
 @router.patch("/{company_id}", response_model=Company)
-async def update_company(company_id: UUID, request: CompanyUpdate):
-    """
-    Update company details.
-    """
-    company = await company_db.update_company(company_id, request)
+async def update_company(
+    company_id: UUID,
+    request: CompanyUpdate,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Update company details."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
+    company = await company_db.update_company(company_id, request)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-
     return company
 
 
@@ -146,13 +175,15 @@ async def update_company(company_id: UUID, request: CompanyUpdate):
 # =============================================================================
 
 @router.put("/{company_id}/umo", response_model=CompanyUMO)
-async def update_umo(company_id: UUID, request: UpdateUMORequest):
-    """
-    Create or update a company's UMO (Unique Mandate Objective).
+async def update_umo(
+    company_id: UUID,
+    request: UpdateUMORequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Create or update a company's UMO (Unique Mandate Objective)."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    This captures what the company is looking for in candidates.
-    """
-    # Verify company exists
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -179,10 +210,13 @@ async def update_umo(company_id: UUID, request: UpdateUMORequest):
 
 
 @router.get("/{company_id}/umo", response_model=Optional[CompanyUMO])
-async def get_umo(company_id: UUID):
-    """
-    Get a company's UMO.
-    """
+async def get_umo(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Get a company's UMO."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     umo = await company_db.get_company_umo(company_id)
     return umo
 
@@ -192,11 +226,15 @@ async def get_umo(company_id: UUID):
 # =============================================================================
 
 @router.post("/{company_id}/roles", response_model=Role)
-async def create_role(company_id: UUID, request: CreateRoleRequest):
-    """
-    Create a new role for a company.
-    """
-    # Verify company exists
+async def create_role(
+    company_id: UUID,
+    request: CreateRoleRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Create a new role for a company."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -237,10 +275,13 @@ async def create_role(company_id: UUID, request: CreateRoleRequest):
 
 
 @router.get("/{company_id}/roles", response_model=list[Role])
-async def get_roles(company_id: UUID):
-    """
-    Get all roles for a company.
-    """
+async def get_roles(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Get all roles for a company."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     roles = await company_db.get_roles(company_id)
     return roles
 
@@ -253,6 +294,7 @@ async def get_roles(company_id: UUID):
 async def import_linkedin(
     company_id: UUID,
     file: UploadFile = File(...),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Import LinkedIn connections from a CSV file.
@@ -262,21 +304,20 @@ async def import_linkedin(
     """
     from app.data.importers.linkedin_csv import LinkedInImporter
 
-    # Verify company exists
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    # Validate file type
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a CSV")
 
     try:
-        # Read file content
         content = await file.read()
         csv_text = content.decode("utf-8")
 
-        # Import
         importer = LinkedInImporter()
         result = await importer.import_csv(company_id, csv_text, file.filename)
 
@@ -299,6 +340,7 @@ async def import_linkedin(
 async def import_database(
     company_id: UUID,
     file: UploadFile = File(...),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Import company's existing database from a CSV file.
@@ -308,21 +350,20 @@ async def import_database(
     """
     from app.data.importers.company_db_importer import CompanyDBImporter
 
-    # Verify company exists
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    # Validate file type
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a CSV")
 
     try:
-        # Read file content
         content = await file.read()
         csv_text = content.decode("utf-8")
 
-        # Import
         importer = CompanyDBImporter()
         result = await importer.import_csv(company_id, csv_text, file.filename)
 
@@ -350,11 +391,12 @@ async def get_people(
     company_id: UUID,
     limit: int = 50,
     offset: int = 0,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
-    """
-    Get people in a company's database.
-    """
-    # Verify company exists
+    """Get people in a company's database."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -371,10 +413,13 @@ async def get_people(
 
 
 @router.get("/{company_id}/imports")
-async def get_imports(company_id: UUID):
-    """
-    Get import history for a company.
-    """
+async def get_imports(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Get import history for a company."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     sources = await company_db.get_data_sources(company_id)
     return sources
 
@@ -384,12 +429,14 @@ async def get_imports(company_id: UUID):
 # =============================================================================
 
 @router.post("/{company_id}/complete-onboarding")
-async def complete_onboarding(company_id: UUID):
-    """
-    Mark onboarding as complete.
+async def complete_onboarding(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Mark onboarding as complete."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    Called after all steps are done.
-    """
     company = await company_db.get_company(company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -400,3 +447,88 @@ async def complete_onboarding(company_id: UUID):
     )
 
     return {"status": "ok", "message": "Onboarding completed"}
+
+
+# =============================================================================
+# API KEY MANAGEMENT
+# =============================================================================
+
+class CreateApiKeyRequest(BaseModel):
+    """Request to create a new API key."""
+    name: str = "default"
+
+
+@router.post("/{company_id}/api-keys")
+async def create_company_api_key(
+    company_id: UUID,
+    request: CreateApiKeyRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """
+    Generate a new API key for this company.
+
+    The raw key is returned only once — save it immediately.
+    """
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    raw_key, key_record = await create_api_key(
+        company_id=str(company_id),
+        name=request.name,
+    )
+
+    return {
+        "api_key": raw_key,
+        "api_key_prefix": key_record.get("key_prefix", raw_key[:20]),
+        "name": request.name,
+        "id": key_record.get("id"),
+    }
+
+
+@router.get("/{company_id}/api-keys")
+async def list_api_keys(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """List all API keys for this company (prefix only, never raw key)."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.core.database import get_supabase_client
+    supabase = get_supabase_client()
+
+    result = supabase.table("api_keys").select(
+        "id, key_prefix, name, scopes, is_active, last_used_at, created_at"
+    ).eq("company_id", str(company_id)).order("created_at", desc=True).execute()
+
+    return {"api_keys": result.data or []}
+
+
+@router.delete("/{company_id}/api-keys/{key_id}")
+async def revoke_api_key(
+    company_id: UUID,
+    key_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """Revoke (deactivate) an API key."""
+    if str(company_id) != auth.company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Don't let them revoke the key they're currently using
+    if str(key_id) == auth.api_key_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot revoke the API key you are currently using",
+        )
+
+    from app.core.database import get_supabase_client
+    supabase = get_supabase_client()
+
+    result = supabase.table("api_keys").update(
+        {"is_active": False}
+    ).eq("id", str(key_id)).eq("company_id", str(company_id)).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    return {"status": "revoked", "key_id": str(key_id)}

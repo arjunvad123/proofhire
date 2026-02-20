@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # Clado AI (LinkedIn search)
     clado_api_key: str = ""
 
+    # Apollo.io (people search - search is FREE on paid plans)
+    apollo_api_key: str = ""
+
+    # Firecrawl (web search for LinkedIn profiles - 50k credits)
+    firecrawl_api_key: str = ""
+
     # Pearch AI (LinkedIn alternative)
     pearch_api_key: str = ""
 
@@ -81,6 +87,12 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-in-production"
     access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
     agencity_internal_api_key: str = ""
+
+    # CORS
+    cors_origins: str = "http://localhost:3000"
+
+    # Sentry
+    sentry_dsn: str = ""
 
     # ProofHire integration
     proofhire_api_base: str = "http://localhost:8000/api"

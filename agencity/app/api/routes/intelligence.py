@@ -16,9 +16,10 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.auth import CompanyAuth, get_current_company
 from app.intelligence.activation import ReverseReferenceGenerator, ActivationMessageGenerator
 from app.intelligence.activation.reverse_reference import RecommendationTracker
 
@@ -33,7 +34,7 @@ router = APIRouter(prefix="/v3", tags=["Intelligence System"])
 
 class ReverseReferenceRequest(BaseModel):
     """Request to generate reverse reference asks."""
-    company_id: UUID
+    company_id: Optional[UUID] = None
     role_title: str
     required_skills: list[str] = None
     target_person_ids: list[UUID] = None
@@ -50,7 +51,7 @@ class ReverseReferenceResponse(BaseModel):
 
 class RecordRecommendationRequest(BaseModel):
     """Request to record a recommendation."""
-    company_id: UUID
+    company_id: Optional[UUID] = None
     recommender_id: UUID
     activation_request_id: UUID = None
     recommended_name: str
@@ -77,7 +78,10 @@ class UpdateStatusRequest(BaseModel):
 # =============================================================================
 
 @router.post("/activate/reverse-reference", response_model=ReverseReferenceResponse)
-async def generate_reverse_reference_asks(request: ReverseReferenceRequest):
+async def generate_reverse_reference_asks(
+    request: ReverseReferenceRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Generate personalized "who would you recommend?" messages.
 
@@ -90,6 +94,7 @@ async def generate_reverse_reference_asks(request: ReverseReferenceRequest):
     "Hey Nikhil, who's the best ML engineer you've ever worked with?"
     """
     try:
+        request.company_id = UUID(auth.company_id)
         generator = ReverseReferenceGenerator(request.company_id)
 
         # Generate requests
@@ -141,7 +146,10 @@ async def generate_reverse_reference_asks(request: ReverseReferenceRequest):
 
 
 @router.post("/recommendations", response_model=RecordRecommendationResponse)
-async def record_recommendation(request: RecordRecommendationRequest):
+async def record_recommendation(
+    request: RecordRecommendationRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Record a recommendation from a network member.
 
@@ -151,6 +159,7 @@ async def record_recommendation(request: RecordRecommendationRequest):
     3. Track the pipeline: recommendation -> intro -> contacted -> converted
     """
     try:
+        request.company_id = UUID(auth.company_id)
         tracker = RecommendationTracker(request.company_id)
 
         result = await tracker.record_recommendation(
@@ -179,7 +188,8 @@ async def record_recommendation(request: RecordRecommendationRequest):
 @router.get("/recommendations/{company_id}")
 async def get_recommendations(
     company_id: UUID,
-    status: str = None
+    status: str = None,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Get all recommendations for a company.
@@ -209,7 +219,10 @@ async def get_recommendations(
 
 
 @router.get("/recommendations/{company_id}/stats")
-async def get_recommendation_stats(company_id: UUID):
+async def get_recommendation_stats(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get recommendation pipeline statistics.
 
@@ -233,7 +246,8 @@ async def get_recommendation_stats(company_id: UUID):
 @router.patch("/recommendations/{recommendation_id}/status")
 async def update_recommendation_status(
     recommendation_id: UUID,
-    request: UpdateStatusRequest
+    request: UpdateStatusRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Update recommendation status.
@@ -264,7 +278,10 @@ async def update_recommendation_status(
 
 
 @router.get("/activate/pending/{company_id}")
-async def get_pending_activation_requests(company_id: UUID):
+async def get_pending_activation_requests(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Get all pending activation requests."""
     try:
         generator = ReverseReferenceGenerator(company_id)
@@ -281,7 +298,10 @@ async def get_pending_activation_requests(company_id: UUID):
 
 
 @router.patch("/activate/{request_id}/sent")
-async def mark_activation_sent(request_id: UUID):
+async def mark_activation_sent(
+    request_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Mark an activation request as sent."""
     try:
         from app.services.company_db import company_db
@@ -308,7 +328,8 @@ async def mark_activation_sent(request_id: UUID):
 @router.patch("/activate/{request_id}/responded")
 async def mark_activation_responded(
     request_id: UUID,
-    had_recommendation: bool = False
+    had_recommendation: bool = False,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """Mark an activation request as responded to."""
     try:
@@ -361,7 +382,10 @@ class GenerateReferralPostRequest(BaseModel):
 
 
 @router.post("/messages/intro-request")
-async def generate_intro_request_message(request: GenerateIntroMessageRequest):
+async def generate_intro_request_message(
+    request: GenerateIntroMessageRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Generate a message to request an introduction."""
     generator = ActivationMessageGenerator()
 
@@ -377,7 +401,10 @@ async def generate_intro_request_message(request: GenerateIntroMessageRequest):
 
 
 @router.post("/messages/referral-post")
-async def generate_referral_post(request: GenerateReferralPostRequest):
+async def generate_referral_post(
+    request: GenerateReferralPostRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Generate a request for someone to post in their community."""
     generator = ActivationMessageGenerator()
 
@@ -404,7 +431,10 @@ async def generate_referral_post(request: GenerateReferralPostRequest):
 # =============================================================================
 
 @router.get("/timing/alerts/{company_id}")
-async def get_timing_alerts(company_id: UUID):
+async def get_timing_alerts(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get timing-based alerts for the network.
 
@@ -433,7 +463,10 @@ async def get_timing_alerts(company_id: UUID):
 
 
 @router.get("/timing/network-analysis/{company_id}")
-async def analyze_network_readiness(company_id: UUID):
+async def analyze_network_readiness(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Analyze readiness across the entire network.
 
@@ -456,7 +489,10 @@ async def analyze_network_readiness(company_id: UUID):
 
 
 @router.get("/timing/tenure/{company_id}")
-async def analyze_network_tenure(company_id: UUID):
+async def analyze_network_tenure(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Analyze tenure patterns across the network.
 
@@ -481,7 +517,8 @@ async def analyze_network_tenure(company_id: UUID):
 @router.get("/timing/vesting-cliffs/{company_id}")
 async def get_approaching_vesting_cliffs(
     company_id: UUID,
-    days_ahead: int = 90
+    days_ahead: int = 90,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Find people approaching their vesting cliff.
@@ -516,7 +553,10 @@ async def get_approaching_vesting_cliffs(
 # =============================================================================
 
 @router.get("/expansion/summary/{company_id}")
-async def get_expansion_summary(company_id: UUID):
+async def get_expansion_summary(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get summary of expansion potential.
 
@@ -547,7 +587,8 @@ class ColleagueExpansionRequest(BaseModel):
 @router.post("/expansion/colleagues/{company_id}")
 async def find_former_colleagues(
     company_id: UUID,
-    request: ColleagueExpansionRequest
+    request: ColleagueExpansionRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Find former colleagues of network members.
@@ -588,7 +629,8 @@ class FindPathsRequest(BaseModel):
 @router.post("/expansion/warm-paths/{company_id}")
 async def find_warm_paths(
     company_id: UUID,
-    request: FindPathsRequest
+    request: FindPathsRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Find all warm paths to a specific candidate.
@@ -628,7 +670,10 @@ async def find_warm_paths(
 # =============================================================================
 
 @router.get("/company/watched/{company_id}")
-async def get_watched_companies(company_id: UUID):
+async def get_watched_companies(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get companies being watched (where network members work).
 
@@ -649,7 +694,10 @@ async def get_watched_companies(company_id: UUID):
 
 
 @router.get("/company/layoffs/{company_id}")
-async def get_layoff_exposure(company_id: UUID):
+async def get_layoff_exposure(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get network's exposure to companies with recent layoffs.
 
@@ -670,7 +718,10 @@ async def get_layoff_exposure(company_id: UUID):
 
 
 @router.get("/company/events/{company_id}")
-async def get_company_events(company_id: UUID):
+async def get_company_events(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get all recent events affecting watched companies.
 
@@ -691,7 +742,10 @@ async def get_company_events(company_id: UUID):
 
 
 @router.get("/company/alerts/{company_id}")
-async def get_company_alerts(company_id: UUID):
+async def get_company_alerts(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get actionable alerts based on company intelligence.
 
@@ -714,7 +768,10 @@ async def get_company_alerts(company_id: UUID):
 
 
 @router.get("/company/digest/{company_id}")
-async def get_daily_digest(company_id: UUID):
+async def get_daily_digest(
+    company_id: UUID,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get daily digest of company intelligence.
 
@@ -734,7 +791,11 @@ async def get_daily_digest(company_id: UUID):
 
 
 @router.get("/company/report/{company_id}/{company_name}")
-async def get_company_report(company_id: UUID, company_name: str):
+async def get_company_report(
+    company_id: UUID,
+    company_name: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get intelligence report for a specific company.
 
@@ -765,7 +826,8 @@ class ScorePersonRequest(BaseModel):
 @router.post("/timing/score-person/{company_id}")
 async def score_person_readiness(
     company_id: UUID,
-    request: ScorePersonRequest
+    request: ScorePersonRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Score readiness for a specific person.
@@ -818,7 +880,7 @@ async def score_person_readiness(
 
 class IntelligenceSearchRequest(BaseModel):
     """Request for full intelligence search."""
-    company_id: UUID
+    company_id: Optional[UUID] = None
     role_title: str
     required_skills: list[str] = None
     locations: list[str] = None
@@ -830,7 +892,10 @@ class IntelligenceSearchRequest(BaseModel):
 
 
 @router.post("/search")
-async def intelligence_search(request: IntelligenceSearchRequest):
+async def intelligence_search(
+    request: IntelligenceSearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Full intelligence search combining all sources.
 
@@ -842,6 +907,7 @@ async def intelligence_search(request: IntelligenceSearchRequest):
     - Activation suggestions: Who to ask for recommendations
     """
     try:
+        request.company_id = UUID(auth.company_id)
         results = {
             "role": request.role_title,
             "tiers": {}

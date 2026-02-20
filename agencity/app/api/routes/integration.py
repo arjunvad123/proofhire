@@ -10,9 +10,10 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, status
 from postgrest.exceptions import APIError
 
+from app.auth import CompanyAuth, get_current_company
 from app.core.database import get_supabase_client
 from app.api.models.integration import (
     CreateLinkageRequest,
@@ -46,7 +47,8 @@ from app.api.models.integration import (
 from app.config import settings
 from app.services.proofhire_client import proofhire_client
 from app.services.external_search.clado_client import clado_client
-from app.services.external_search.pdl_client import pdl_client
+from app.services.external_search.apollo_client import apollo_client
+from app.services.external_search.firecrawl_client import firecrawl_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -58,12 +60,16 @@ router = APIRouter()
 # These endpoints are kept for backwards compatibility but will be removed in future versions
 
 @router.post("/linkages", response_model=LinkageResponse, status_code=201, deprecated=True)
-async def create_linkage(request: CreateLinkageRequest):
+async def create_linkage(
+    request: CreateLinkageRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Create a new candidate linkage between Agencity and ProofHire.
 
     This is called when a founder clicks "Invite to ProofHire" in the Agencity UI.
     """
+    request.company_id = auth.company_id
     supabase = get_supabase_client()
 
     try:
@@ -245,12 +251,16 @@ async def update_linkage(linkage_id: str, request: UpdateLinkageRequest):
 # ============================================================================
 
 @router.post("/proofhire/invite", response_model=InviteToProofHireResponse, status_code=201)
-async def invite_candidate_to_proofhire(request: InviteToProofHireRequest):
+async def invite_candidate_to_proofhire(
+    request: InviteToProofHireRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Create a ProofHire application and persist candidate linkage.
 
     This is the operational replacement for deprecated linkage flow.
     """
+    request.company_id = auth.company_id
     supabase = get_supabase_client()
 
     try:
@@ -443,15 +453,20 @@ async def get_decision_packet(proofhire_application_id: str):
 @router.get("/providers/health", response_model=Dict[str, Any])
 async def get_external_providers_health():
     """Health snapshot for external dependencies used in search/integration."""
-    clado_health, pdl_health, proofhire_health = await asyncio.gather(
+    clado_health, firecrawl_health, apollo_health, proofhire_health = await asyncio.gather(
         clado_client.health_check(),
-        pdl_client.health_check(),
+        firecrawl_client.health_check(),
+        apollo_client.health_check(),
         proofhire_client.health_check(),
     )
-    providers = [clado_health, pdl_health, proofhire_health]
+    search_providers = [clado_health, firecrawl_health, apollo_health]
+    all_providers = search_providers + [proofhire_health]
+    active_search = sum(1 for p in search_providers if p.get("ok"))
     return {
-        "ok": all(p.get("ok") for p in providers),
-        "providers": providers,
+        "ok": active_search > 0,  # OK if at least one search provider works
+        "active_search_providers": active_search,
+        "total_search_providers": len(search_providers),
+        "providers": all_providers,
     }
 
 
@@ -460,12 +475,16 @@ async def get_external_providers_health():
 # ============================================================================
 
 @router.post("/feedback/action", response_model=FeedbackResponse, status_code=201)
-async def record_feedback(request: RecordFeedbackRequest):
+async def record_feedback(
+    request: RecordFeedbackRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Record a feedback action for reinforcement learning.
 
     Called when founder makes a hiring decision (hired, rejected, etc.).
     """
+    request.company_id = auth.company_id
     supabase = get_supabase_client()
 
     try:
@@ -512,7 +531,10 @@ async def record_feedback(request: RecordFeedbackRequest):
 
 
 @router.get("/feedback/stats/{company_id}", response_model=FeedbackStatsResponse)
-async def get_feedback_stats(company_id: str):
+async def get_feedback_stats(
+    company_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get feedback statistics for a company.
 
@@ -577,7 +599,8 @@ async def get_pipeline(
     company_id: str,
     status: str = Query("all", description="Filter by status"),
     sort: str = Query("date", description="Sort by: date, score, status"),
-    limit: int = Query(50, ge=1, le=200, description="Max results")
+    limit: int = Query(50, ge=1, le=200, description="Max results"),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Get all candidates in the pipeline for a company.
@@ -665,7 +688,8 @@ async def get_pipeline(
 @router.patch("/candidates/{candidate_id}/status", response_model=UpdateStatusResponse)
 async def update_candidate_status(
     candidate_id: str,
-    request: UpdateStatusRequest
+    request: UpdateStatusRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Update candidate pipeline status.
@@ -738,7 +762,8 @@ async def update_candidate_status(
 async def get_curation_cache(
     company_id: UUID,
     role_id: UUID,
-    force_refresh: bool = Query(False, description="Force refresh cache")
+    force_refresh: bool = Query(False, description="Force refresh cache"),
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Get cached curated candidates for a role.
@@ -796,7 +821,8 @@ async def get_curation_cache(
 @router.post("/curation/cache/generate/{company_id}", response_model=Dict[str, str])
 async def generate_curation_cache(
     company_id: str,
-    request: GenerateCacheRequest
+    request: GenerateCacheRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Generate/refresh cached curated candidates for a role.
@@ -846,7 +872,8 @@ async def generate_curation_cache(
 @router.post("/curation/cache/generate-all/{company_id}", response_model=Dict[str, Any])
 async def generate_all_curation_caches(
     company_id: str,
-    request: GenerateAllCachesRequest
+    request: GenerateAllCachesRequest,
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Generate/refresh cached curated candidates for ALL company roles.
@@ -892,7 +919,10 @@ async def generate_all_curation_caches(
 
 
 @router.get("/curation/cache-status/{company_id}", response_model=CacheStatusResponse)
-async def get_cache_status(company_id: str):
+async def get_cache_status(
+    company_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get curation cache status for all company roles.
 

@@ -4,9 +4,10 @@ Shortlist API routes.
 Handles shortlist retrieval and candidate feedback.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.auth import CompanyAuth, get_current_company
 from app.core.search_engine import SearchEngine
 from app.models.blueprint import RoleBlueprint
 from app.models.evaluation import Shortlist
@@ -58,7 +59,10 @@ class ShortlistResponse(BaseModel):
 
 
 @router.post("/search", response_model=ShortlistResponse)
-async def search_candidates(request: SearchRequest):
+async def search_candidates(
+    request: SearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Search for candidates matching a blueprint.
 
@@ -102,7 +106,10 @@ async def search_candidates(request: SearchRequest):
 
 
 @router.get("/{shortlist_id}", response_model=ShortlistResponse)
-async def get_shortlist(shortlist_id: str):
+async def get_shortlist(
+    shortlist_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Get a shortlist by ID."""
     shortlist = shortlists.get(shortlist_id)
     if not shortlist:
@@ -133,7 +140,11 @@ async def get_shortlist(shortlist_id: str):
 
 
 @router.post("/{shortlist_id}/feedback")
-async def submit_feedback(shortlist_id: str, feedback: CandidateFeedback):
+async def submit_feedback(
+    shortlist_id: str,
+    feedback: CandidateFeedback,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Submit feedback on a candidate.
 

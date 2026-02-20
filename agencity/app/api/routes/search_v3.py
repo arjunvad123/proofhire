@@ -6,8 +6,9 @@ and adds warm path intelligence.
 """
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from app.auth import CompanyAuth, get_current_company
 from app.services.search_orchestrator import search_orchestrator, HybridSearchResult
 from app.services.network_index import network_index_service
 from app.services.warm_path_finder import warm_path_finder, CandidateWithWarmth
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/v3/search", tags=["search-v3"])
 class HybridSearchRequest(BaseModel):
     """Request for hybrid search."""
 
-    company_id: str
+    company_id: Optional[str] = None
     role_title: str
     required_skills: list[str] = []
     preferred_skills: list[str] = []
@@ -106,7 +107,10 @@ def _to_candidate_response(c: CandidateWithWarmth) -> CandidateResponse:
 
 
 @router.post("/hybrid", response_model=HybridSearchResponse)
-async def hybrid_search(request: HybridSearchRequest):
+async def hybrid_search(
+    request: HybridSearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Execute hybrid search across network + external databases.
 
@@ -118,6 +122,7 @@ async def hybrid_search(request: HybridSearchRequest):
     Each candidate includes warm path information when available.
     """
     try:
+        request.company_id = auth.company_id
         result = await search_orchestrator.search(
             company_id=request.company_id,
             role_title=request.role_title,
@@ -161,7 +166,10 @@ async def hybrid_search(request: HybridSearchRequest):
 
 
 @router.get("/network-index/{company_id}")
-async def get_network_index(company_id: str):
+async def get_network_index(
+    company_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Get the network index for a company.
 
@@ -193,7 +201,8 @@ async def get_network_index(company_id: str):
 @router.post("/warm-paths/{company_id}")
 async def find_warm_paths_for_linkedin(
     company_id: str,
-    linkedin_urls: list[str]
+    linkedin_urls: list[str],
+    auth: CompanyAuth = Depends(get_current_company),
 ):
     """
     Find warm paths for specific LinkedIn profiles.

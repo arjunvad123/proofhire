@@ -12,8 +12,9 @@ Replaces: /v1/curation, /v2/search, /v3/search, /v3/intelligence
 """
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from app.auth import CompanyAuth, get_current_company
 from app.config import settings
 from app.services.unified_search import Candidate
 from app.services.master_orchestrator import master_orchestrator
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/search", tags=["unified-search"])
 class SearchRequest(BaseModel):
     """Unified search request."""
 
-    company_id: str
+    company_id: Optional[str] = None
     role_title: str
     required_skills: list[str] = []
     preferred_skills: list[str] = []
@@ -154,9 +155,12 @@ def _to_response(c: Candidate) -> CandidateResponse:
 # =============================================================================
 
 @router.post("", response_model=SearchResponse)
-async def search(request: SearchRequest):
+async def search(
+    request: SearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
-    🔍 UNIFIED SEARCH
+    Unified Search
 
     One endpoint that does everything:
     - Searches your network (Tier 1)
@@ -172,6 +176,9 @@ async def search(request: SearchRequest):
     Returns candidates ranked by: fit (50%) + warmth (30%) + timing (20%)
     """
     try:
+        # Enforce company isolation from auth
+        request.company_id = auth.company_id
+
         # Route all primary /search traffic through the master orchestrator.
         # Map request flags to a base mode, then pass explicit overrides.
         if request.deep_research:
@@ -227,23 +234,29 @@ async def search(request: SearchRequest):
 
 
 @router.post("/network-only", response_model=SearchResponse)
-async def search_network_only(request: SearchRequest):
+async def search_network_only(
+    request: SearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Search ONLY the founder's network.
     Equivalent to: include_external=false, include_timing=true, deep_research=true
     """
     request.include_external = False
-    return await search(request)
+    return await search(request, auth=auth)
 
 
 @router.post("/quick", response_model=SearchResponse)
-async def quick_search(request: SearchRequest):
+async def quick_search(
+    request: SearchRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Quick search - network + external, no research.
     Faster but less detailed.
     """
     request.deep_research = False
-    return await search(request)
+    return await search(request, auth=auth)
 
 
 @router.get("/health")

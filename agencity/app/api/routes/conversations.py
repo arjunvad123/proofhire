@@ -7,9 +7,10 @@ Handles the intake conversation flow with founders.
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.auth import CompanyAuth, get_current_company
 from app.core.conversation_engine import ConversationEngine
 from app.core.search_engine import SearchEngine
 from app.models.conversation import Conversation, ConversationStatus
@@ -47,7 +48,10 @@ class ConversationResponse(BaseModel):
 
 
 @router.post("", response_model=ConversationResponse)
-async def start_conversation(request: StartConversationRequest):
+async def start_conversation(
+    request: StartConversationRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Start a new intake conversation.
 
@@ -95,7 +99,11 @@ async def start_conversation(request: StartConversationRequest):
 
 
 @router.post("/{conversation_id}/message", response_model=ConversationResponse)
-async def send_message(conversation_id: str, request: SendMessageRequest):
+async def send_message(
+    conversation_id: str,
+    request: SendMessageRequest,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """
     Send a message in an existing conversation.
 
@@ -136,7 +144,10 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
 
 
 @router.get("/{conversation_id}", response_model=ConversationResponse)
-async def get_conversation(conversation_id: str):
+async def get_conversation(
+    conversation_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Get current conversation state."""
     conversation = conversations.get(conversation_id)
     if not conversation:
@@ -153,7 +164,10 @@ async def get_conversation(conversation_id: str):
 
 
 @router.get("/{conversation_id}/blueprint")
-async def get_blueprint(conversation_id: str):
+async def get_blueprint(
+    conversation_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
     """Get the extracted blueprint from a conversation."""
     conversation = conversations.get(conversation_id)
     if not conversation:

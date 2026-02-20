@@ -59,6 +59,38 @@ services:
       exit 0;
       "
 
+  agencity:
+    build:
+      context: ./agencity
+      dockerfile: Dockerfile
+    container_name: proofhire-agencity
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${AGENCITY_DEBUG:-false}
+      REDIS_URL: redis://redis:6379/1
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PDL_API_KEY: ${PDL_API_KEY:-}
+      CLADO_API_KEY: ${CLADO_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
+      PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME:-agencity-people}
+      SENTRY_DSN: ${AGENCITY_SENTRY_DSN:-}
+      CORS_ORIGINS: ${AGENCITY_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: ./backend

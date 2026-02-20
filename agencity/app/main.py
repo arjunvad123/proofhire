@@ -12,12 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.config import settings
+from app.logging_config import setup_logging
+from app.middleware import RequestIdMiddleware
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure structured logging
+setup_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,20 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info(f"Starting Agencity in {settings.app_env} mode")
+
+    # Initialize Sentry if configured
+    if settings.sentry_dsn:
+        try:
+            import sentry_sdk
+            sentry_sdk.init(
+                dsn=settings.sentry_dsn,
+                environment=settings.app_env,
+                traces_sample_rate=0.1,
+            )
+            logger.info("Sentry initialized")
+        except ImportError:
+            logger.warning("sentry-sdk not installed, skipping Sentry init")
+
     yield
     logger.info("Shutting down Agencity")
 
@@ -38,10 +51,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Request ID middleware (adds X-Request-ID to every request/response)
+app.add_middleware(RequestIdMiddleware)
+
 # CORS middleware
+cors_origins = (
+    settings.cors_origins.split(",")
+    if settings.cors_origins
+    else ["http://localhost:3000"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,22 +79,38 @@ async def root():
         "name": "Agencity",
         "status": "ok",
         "version": "0.1.0",
-        "description": "AI hiring agent that finds people you can't search for",
     }
 
 
 @app.get("/health")
 async def health():
-    """Detailed health check."""
+    """Detailed health check. Tests actual connectivity."""
+    checks = {}
+
+    # Check Supabase
+    try:
+        from app.core.database import get_supabase_client
+        sb = get_supabase_client()
+        sb.table("companies").select("id").limit(1).execute()
+        checks["supabase"] = "healthy"
+    except Exception:
+        checks["supabase"] = "unreachable"
+
+    # Check Redis
+    try:
+        import redis
+        r = redis.from_url(settings.redis_url, socket_timeout=2)
+        r.ping()
+        checks["redis"] = "healthy"
+    except Exception:
+        checks["redis"] = "unreachable"
+
+    all_healthy = all(v == "healthy" for v in checks.values())
+
     return {
-        "status": "healthy",
+        "status": "healthy" if all_healthy else "degraded",
         "environment": settings.app_env,
-        "llm_configured": bool(settings.openai_api_key),
-        "github_configured": bool(settings.github_token),
-        "supabase_configured": bool(settings.supabase_url and settings.supabase_key),
-        "pdl_configured": bool(settings.pdl_api_key),
-        "clado_configured": bool(settings.clado_api_key),
-        "proofhire_configured": bool(settings.proofhire_api_base),
+        "checks": checks,
     }
 
 
