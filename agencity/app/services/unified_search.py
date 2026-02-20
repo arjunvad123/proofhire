@@ -18,13 +18,17 @@ Usage:
 """
 
 import asyncio
+import logging
 from typing import Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 from app.services.company_db import company_db
 from app.services.network_index import network_index_service, NetworkIndex
 from app.services.warm_path_finder import warm_path_finder, WarmPath
 from app.services.external_search.clado_client import clado_client, CladoProfile
-from app.services.external_search.pdl_client import pdl_client, PDLProfile
+from app.services.external_search.apollo_client import apollo_client, ApolloProfile
+from app.services.external_search.firecrawl_client import firecrawl_client, FirecrawlProfile
 from app.services.external_search.query_generator import query_generator
 from app.config import settings
 
@@ -219,6 +223,13 @@ class UnifiedSearchEngine:
             )
             print(f"   Found {len(external_candidates)} external")
 
+        # Step 3.5: Enrich top external candidates with Clado
+        if include_external and external_candidates:
+            print("\n🔬 Step 3.5: Enriching top external candidates via Clado...")
+            external_candidates = await self._enrich_external_candidates(
+                external_candidates, role_title, required_skills, max_enrich=10
+            )
+
         # Step 4: Add timing signals if enabled
         all_candidates = network_candidates + external_candidates
         if include_timing:
@@ -338,7 +349,7 @@ class UnifiedSearchEngine:
         network_index: NetworkIndex,
         limit: int
     ) -> tuple[list[Candidate], dict]:
-        """Search external APIs and find warm paths."""
+        """Search ALL external APIs in parallel and find warm paths."""
 
         # Generate smart queries
         queries = await query_generator.generate_queries(
@@ -350,17 +361,43 @@ class UnifiedSearchEngine:
             network_schools=network_stats.get('top_schools', [])
         )
 
-        # Query both external providers in parallel.
-        clado_task = clado_client.search(queries.primary_query.query, limit=limit)
-        pdl_task = pdl_client.search(
-            queries.primary_query.query,
-            limit=limit,
-            location=location,
+        search_query = queries.primary_query.query
+
+        # Build Firecrawl tasks: primary query + expansion queries for more candidates
+        firecrawl_tasks = [
+            firecrawl_client.search(search_query, limit=20, location=location)
+        ]
+        for eq in queries.expansion_queries[:2]:
+            firecrawl_tasks.append(
+                firecrawl_client.search(eq.query, limit=15, location=location)
+            )
+
+        # Run ALL providers in parallel (Clado + Apollo + multiple Firecrawl queries)
+        all_tasks = [
+            clado_client.search(search_query, limit=limit),
+            apollo_client.search(search_query, limit=limit, location=location),
+            *firecrawl_tasks,
+        ]
+        all_results = await asyncio.gather(*all_tasks)
+
+        clado_results = all_results[0]
+        apollo_results = all_results[1]
+        # Merge all Firecrawl results into one
+        firecrawl_profiles = []
+        for fc_result in all_results[2:]:
+            firecrawl_profiles.extend(fc_result.profiles)
+        from app.services.external_search.firecrawl_client import FirecrawlSearchResult
+        firecrawl_results = FirecrawlSearchResult(
+            profiles=firecrawl_profiles,
+            total_matches=len(firecrawl_profiles),
+            query_used=search_query,
         )
-        clado_results, pdl_results = await asyncio.gather(clado_task, pdl_task)
-        clado_health, pdl_health = await asyncio.gather(
+
+        # Health checks in parallel
+        clado_health, apollo_health, firecrawl_health = await asyncio.gather(
             clado_client.health_check(),
-            pdl_client.health_check(),
+            apollo_client.health_check(),
+            firecrawl_client.health_check(),
         )
 
         candidates = []
@@ -393,53 +430,16 @@ class UnifiedSearchEngine:
                         ))
             return warm_paths
 
-        for profile in clado_results.profiles:
-            if profile.linkedin_url:
-                seen_linkedin_urls.add(profile.linkedin_url.lower())
-
-            warm_paths = _build_warm_paths(
-                profile.current_company,
-                profile.education,
-                profile.full_name,
-            )
-
-            # Determine tier and warmth
-            best_path = warm_paths[0] if warm_paths else None
-            warmth_score = best_path.warmth_score * 100 if best_path else 0
-            tier = 2 if warmth_score > 0 else 3
-
-            candidates.append(Candidate(
-                id=profile.id,
-                full_name=profile.full_name,
-                current_title=profile.current_title,
-                current_company=profile.current_company,
-                headline=profile.headline,
-                location=profile.location,
-                linkedin_url=profile.linkedin_url,
-                github_url=profile.github_url,
-                twitter_url=profile.twitter_url,
-                skills=profile.skills,
-                experience=profile.experience,
-                education=profile.education,
-                fit_score=profile.match_score * 100 if profile.match_score <= 1 else profile.match_score,
-                warmth_score=warmth_score,
-                source="external",
-                tier=tier,
-                is_from_network=False,
-                warm_path=best_path,
-                intro_message=best_path.suggested_message if best_path else None
-            ))
-
-        for profile in pdl_results.profiles:
+        def _add_candidate(profile, source_provider: str):
+            """Add a profile from any provider to the candidate list, deduplicating by LinkedIn URL."""
             if profile.linkedin_url and profile.linkedin_url.lower() in seen_linkedin_urls:
-                continue
-
+                return
             if profile.linkedin_url:
                 seen_linkedin_urls.add(profile.linkedin_url.lower())
 
             warm_paths = _build_warm_paths(
                 profile.current_company,
-                profile.education,
+                getattr(profile, 'education', []),
                 profile.full_name,
             )
 
@@ -455,12 +455,12 @@ class UnifiedSearchEngine:
                 headline=profile.headline,
                 location=profile.location,
                 linkedin_url=profile.linkedin_url,
-                github_url=profile.github_url,
-                twitter_url=profile.twitter_url,
-                skills=profile.skills,
-                experience=profile.experience,
-                education=profile.education,
-                fit_score=profile.match_score * 100 if profile.match_score <= 1 else profile.match_score,
+                github_url=getattr(profile, 'github_url', None),
+                twitter_url=getattr(profile, 'twitter_url', None),
+                skills=getattr(profile, 'skills', []),
+                experience=getattr(profile, 'experience', []),
+                education=getattr(profile, 'education', []),
+                fit_score=(profile.match_score * 100 if profile.match_score and profile.match_score <= 1 else profile.match_score) or 50.0,
                 warmth_score=warmth_score,
                 source="external",
                 tier=tier,
@@ -468,35 +468,150 @@ class UnifiedSearchEngine:
                 warm_path=best_path,
                 intro_message=best_path.suggested_message if best_path else None
             ))
+
+        # Process all providers — Clado first (best match scores), then Firecrawl, then Apollo
+        for profile in clado_results.profiles:
+            _add_candidate(profile, "clado")
+
+        for profile in firecrawl_results.profiles:
+            _add_candidate(profile, "firecrawl")
+
+        for profile in apollo_results.profiles:
+            _add_candidate(profile, "apollo")
 
         provider_stats = {
             "clado_total_matches": clado_results.total_matches,
             "clado_profiles_returned": len(clado_results.profiles),
-            "pdl_total_matches": pdl_results.total_matches,
-            "pdl_profiles_returned": len(pdl_results.profiles),
+            "firecrawl_total_matches": firecrawl_results.total_matches,
+            "firecrawl_profiles_returned": len(firecrawl_results.profiles),
+            "apollo_total_matches": apollo_results.total_matches,
+            "apollo_profiles_returned": len(apollo_results.profiles),
             "deduped_external_candidates": len(candidates),
         }
         provider_health = {
             "clado": clado_health,
-            "pdl": pdl_health,
+            "firecrawl": firecrawl_health,
+            "apollo": apollo_health,
         }
 
+        # Diagnostics
+        active_providers = sum(1 for h in [clado_health, firecrawl_health, apollo_health] if h.get("ok"))
         if len(candidates) == 0:
             diagnostics.append(
-                "External search returned zero candidates. Check provider credits, query quality, or provider limits."
+                f"External search returned zero candidates across {active_providers} active providers. "
+                "Check provider credits, query quality, or provider limits."
             )
         if not clado_health.get("ok"):
             diagnostics.append("Clado provider unhealthy or not configured.")
-        if not pdl_health.get("ok"):
-            diagnostics.append("PDL provider unhealthy or not configured.")
+        if not firecrawl_health.get("ok"):
+            diagnostics.append("Firecrawl provider unhealthy or not configured.")
+        if not apollo_health.get("ok"):
+            diagnostics.append("Apollo provider unhealthy or not configured.")
 
         meta = {
             "provider_stats": provider_stats,
             "provider_health": provider_health,
             "diagnostics": diagnostics,
+            "active_providers": active_providers,
             "yield_ok": len(candidates) > 0,
         }
         return candidates, meta
+
+    async def _enrich_external_candidates(
+        self,
+        candidates: list[Candidate],
+        role_title: str,
+        required_skills: list[str],
+        max_enrich: int = 10
+    ) -> list[Candidate]:
+        """
+        Enrich top external candidates using Clado's waterfall enrichment.
+
+        Firecrawl only gives us name/title/company from search snippets.
+        Clado enrichment fills in skills, experience, education — giving
+        the scoring engine much better data to work with.
+
+        Cost: ~$0.01-$0.03 per candidate (1-3 Clado credits)
+        """
+        if not clado_client.enabled:
+            print("   Clado not configured, skipping enrichment")
+            return candidates
+
+        # Pick candidates with LinkedIn URLs, sorted by current fit_score
+        enrichable = [
+            (i, c) for i, c in enumerate(candidates)
+            if c.linkedin_url and c.source == "external"
+        ]
+        # Prioritize by fit_score so we enrich the most promising first
+        enrichable.sort(key=lambda x: x[1].fit_score, reverse=True)
+        enrichable = enrichable[:max_enrich]
+
+        if not enrichable:
+            print("   No candidates with LinkedIn URLs to enrich")
+            return candidates
+
+        print(f"   Enriching {len(enrichable)} candidates via Clado waterfall...")
+
+        # Run enrichment in parallel (batched to avoid rate limits)
+        async def _enrich_one(idx: int, candidate: Candidate) -> tuple[int, Optional[CladoProfile]]:
+            try:
+                profile = await clado_client.get_profile_with_fallback(candidate.linkedin_url)
+                return (idx, profile)
+            except Exception as e:
+                logger.warning("Clado enrichment failed for %s: %s", candidate.full_name, e)
+                return (idx, None)
+
+        # Run all enrichments in parallel
+        results = await asyncio.gather(*[
+            _enrich_one(idx, c) for idx, c in enrichable
+        ])
+
+        enriched_count = 0
+        for idx, profile in results:
+            if profile is None:
+                continue
+
+            c = candidates[idx]
+            enriched_count += 1
+
+            # Update with enriched data (only override if we got better data)
+            if profile.skills:
+                c.skills = profile.skills
+            if profile.experience:
+                c.experience = profile.experience
+            if profile.education:
+                c.education = profile.education
+            if profile.headline and not c.headline:
+                c.headline = profile.headline
+            if profile.location and not c.location:
+                c.location = profile.location
+            if profile.current_title:
+                c.current_title = profile.current_title
+            if profile.current_company:
+                c.current_company = profile.current_company
+
+            # Recalculate fit score with enriched data
+            person_dict = {
+                "headline": c.headline or "",
+                "current_title": c.current_title or "",
+                "skills": c.skills,
+            }
+            # Enhanced fit calculation using skills
+            new_fit = self._calculate_fit(person_dict, role_title, required_skills)
+            # Also check skills list directly
+            skill_bonus = 0
+            for skill in required_skills:
+                if any(skill.lower() in s.lower() for s in c.skills):
+                    skill_bonus += 10
+            new_fit = min(new_fit + skill_bonus, 100)
+
+            if new_fit > c.fit_score:
+                c.fit_score = new_fit
+
+            c.confidence = 0.8  # Higher confidence after enrichment
+
+        print(f"   Enriched {enriched_count}/{len(enrichable)} candidates successfully")
+        return candidates
 
     async def _add_timing_signals(self, candidates: list[Candidate]) -> list[Candidate]:
         """Add timing/urgency signals to candidates."""

@@ -165,7 +165,7 @@ class CuratedCandidate(BaseModel):
 
 class CurationRequest(BaseModel):
     """Request to curate candidates for a role."""
-    company_id: str
+    company_id: Optional[str] = None
     role_id: str
     limit: int = Field(default=15, ge=1, le=50)
 

@@ -24,7 +24,7 @@ from app.models.curation import (
 )
 from app.services.candidate_builder import CandidateBuilder
 from app.services.research.perplexity_researcher import DeepResearchEngine
-from app.services.external_search.pdl_client import PDLClient
+from app.services.external_search.clado_client import clado_client
 from app.config import settings
 import re
 from datetime import datetime, timedelta
@@ -775,12 +775,10 @@ class CandidateCurationEngine:
         cache_hits = 0
         total_cost = 0.0
 
-        # Initialize PDL client
-        if not settings.pdl_api_key:
-            print("⚠️  PDL API key not configured - skipping enrichment")
+        # Use Clado for enrichment (waterfall: cache $0.01 -> scrape $0.02)
+        if not clado_client.enabled:
+            print("  Clado API key not configured - skipping enrichment")
             return 0
-
-        pdl_client = PDLClient(api_key=settings.pdl_api_key)
 
         for item in candidates_to_enrich:
             candidate = item['candidate']
@@ -788,7 +786,7 @@ class CandidateCurationEngine:
             linkedin_url = candidate.linkedin_url
 
             if not linkedin_url:
-                print(f"  ⏭️  Skipping {candidate.full_name} (no LinkedIn URL)")
+                print(f"  Skipping {candidate.full_name} (no LinkedIn URL)")
                 continue
 
             # Check if enrichment already exists and is fresh
@@ -803,29 +801,29 @@ class CandidateCurationEngine:
                     age_days = (datetime.now(updated_at.tzinfo) - updated_at).days
 
                     if age_days < 30:
-                        print(f"  ✓ {candidate.full_name} (cached, {age_days}d old)")
+                        print(f"  {candidate.full_name} (cached, {age_days}d old)")
                         # Update candidate with existing enrichment
                         self._apply_enrichment(candidate, existing)
                         item['was_enriched'] = True
                         cache_hits += 1
                         continue
 
-            # Enrich with PDL
-            print(f"  🔍 Enriching {candidate.full_name} via PDL...")
-            pdl_profile = await pdl_client.enrich_profile(linkedin_url)
+            # Enrich with Clado (waterfall: cache -> scrape)
+            print(f"  Enriching {candidate.full_name} via Clado...")
+            clado_profile = await clado_client.get_profile_with_fallback(linkedin_url)
 
-            if pdl_profile:
-                # Convert PDL format to our format
+            if clado_profile:
+                # Convert Clado format to our format
                 enrichment_data = {
-                    'skills': pdl_profile.skills,
-                    'experience': pdl_profile.experience,
-                    'education': pdl_profile.education,
-                    'headline': pdl_profile.headline,
-                    'location': pdl_profile.location
+                    'skills': clado_profile.skills,
+                    'experience': clado_profile.experience,
+                    'education': clado_profile.education,
+                    'headline': clado_profile.headline,
+                    'location': clado_profile.location
                 }
 
                 # Store enrichment in database
-                await self._store_enrichment(person_id, enrichment_data, 'pdl')
+                await self._store_enrichment(person_id, enrichment_data, 'clado')
 
                 # Apply enrichment to candidate
                 self._apply_enrichment(candidate, enrichment_data)
@@ -834,12 +832,12 @@ class CandidateCurationEngine:
                 candidate.data_completeness = candidate.calculate_completeness()
 
                 enriched_count += 1
-                total_cost += 0.10  # PDL cost per enrichment
+                total_cost += 0.02  # Clado cost (~$0.01-0.02 per enrichment)
                 item['was_enriched'] = True
 
-                print(f"    ✓ Success ($0.10)")
+                print(f"    Success ($0.01-0.02)")
             else:
-                print(f"    ✗ Failed to enrich {candidate.full_name}")
+                print(f"    Failed to enrich {candidate.full_name}")
 
         if enriched_count > 0:
             print(f"💰 Total enrichment cost: ${total_cost:.2f} ({cache_hits} cache hits)")

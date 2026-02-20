@@ -14,7 +14,6 @@ from app.services.company_db import company_db
 from app.services.network_index import network_index_service, NetworkIndex
 from app.services.warm_path_finder import warm_path_finder, CandidateWithWarmth
 from app.services.external_search.clado_client import clado_client, CladoProfile
-from app.services.external_search.pdl_client import pdl_client, PDLProfile
 from app.services.external_search.query_generator import query_generator, QuerySet
 from app.models.curation import UnifiedCandidate
 

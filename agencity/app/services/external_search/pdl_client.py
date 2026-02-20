@@ -254,7 +254,7 @@ class PDLClient:
             github_url=f"https://{data['github_url']}" if data.get("github_url") else None,
             twitter_url=f"https://{data['twitter_url']}" if data.get("twitter_url") else None,
             facebook_url=f"https://{data['facebook_url']}" if data.get("facebook_url") else None,
-            personal_website=data.get("personal_emails", [None])[0] if data.get("personal_emails") else None,
+            personal_website=data["personal_emails"][0] if isinstance(data.get("personal_emails"), list) and data["personal_emails"] else None,
             match_score=0.8  # PDL doesn't return scores, assume high relevance
         )
 
