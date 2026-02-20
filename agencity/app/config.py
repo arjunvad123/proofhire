@@ -97,8 +97,8 @@ class Settings(BaseSettings):
     # Required for production. Without a proxy, your server's IP is exposed.
     #
     # Decodo (formerly SmartProxy):  proxy_provider="smartproxy"
-    #                                Option 1 (API Key): proxy_api_key="your-api-key"
-    #                                Option 2 (Username/Password): proxy_username="your-username", proxy_password="your-password"
+    #                                proxy_username="your-username"
+    #                                proxy_password="your-password"
     #                                Pricing: from $1.5/GB (residential proxies)
     #                                Free trial: 3 days, 100MB
     #
@@ -108,9 +108,8 @@ class Settings(BaseSettings):
     #
     # Leave all blank to connect directly (no proxy).
     proxy_provider: str = ""  # "smartproxy" (Decodo) or "brightdata"
-    proxy_api_key: str = ""  # Decodo API key (alternative to username/password)
-    proxy_username: str = ""  # Username for proxy auth (or Decodo username if no API key)
-    proxy_password: str = ""  # Password for proxy auth
+    proxy_username: str = ""  # Username for proxy authentication
+    proxy_password: str = ""  # Password for proxy authentication
 
 
 settings = Settings()
