@@ -718,7 +718,14 @@ Would you be open to making an intro? I'd love to learn more about their work.
 Thanks!"""
         elif has_temporal_overlap and overlap_months >= 6:
             # Strong overlap - they likely know each other
-            return f"""Hey {connector_first}! I'm hiring and noticed you and {candidate_first} overlapped at {company} for about {overlap_months // 12} year{'s' if overlap_months >= 24 else ''}{f' and {overlap_months % 12} months' if overlap_months % 12 > 0 and overlap_months >= 12 else ''}.
+            years = overlap_months // 12
+            months = overlap_months % 12
+            duration = f"{years} year{'s' if years != 1 else ''}" if years > 0 else ""
+            if months > 0 and years > 0:
+                duration += f" and {months} month{'s' if months != 1 else ''}"
+            elif months > 0:
+                duration = f"{months} month{'s' if months != 1 else ''}"
+            return f"""Hey {connector_first}! I'm hiring and noticed you and {candidate_first} overlapped at {company} for about {duration}.
 
 Any chance you know them and could make an intro? Would love your take on them too.
 
