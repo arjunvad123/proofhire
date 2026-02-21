@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { enrichCandidateEmail } from '@/lib/agencity-api';
 
 // Types
 interface CandidateDetail {
@@ -67,6 +68,8 @@ export default function CandidateDetailPage() {
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'intelligence' | 'activity'>('overview');
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
 
   useEffect(() => {
     loadCandidate();
@@ -140,14 +143,33 @@ export default function CandidateDetailPage() {
     }
   }
 
+  async function handleEnrichEmail() {
+    if (!candidate) return;
+    setEnriching(true);
+    setEnrichError(null);
+    try {
+      const result = await enrichCandidateEmail(candidate.id);
+      if (result.data?.email) {
+        setCandidate((prev) => prev ? { ...prev, email: result.data!.email! } : prev);
+      } else {
+        setEnrichError('No email found');
+      }
+    } catch {
+      setEnrichError('Enrichment failed');
+    } finally {
+      setEnriching(false);
+    }
+  }
+
   async function handleInviteToProofHire() {
     // TODO: Implement invite logic
     alert('Invite to ProofHire simulation');
   }
 
-  async function handleContact() {
-    // TODO: Implement contact logic
-    alert('Contact candidate');
+  function getMailtoLink() {
+    const subject = encodeURIComponent(`Opportunity via ProofHire`);
+    const body = encodeURIComponent(`Hi ${candidate?.name},\n\n`);
+    return `mailto:${candidate?.email}?subject=${subject}&body=${body}`;
   }
 
   async function handleSave() {
@@ -340,12 +362,48 @@ export default function CandidateDetailPage() {
                     View Evaluation Brief
                   </Link>
                 )}
-                <button
-                  onClick={handleContact}
-                  className="w-full px-4 py-3 bg-white border border-gray-200 text-gray-900 rounded-lg font-medium hover:bg-gray-50"
-                >
-                  Contact Candidate
-                </button>
+                {candidate.status === 'sourced' && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        // TODO: call updateCandidateStatus(companyId, candidate.id, 'contacted') when companyId is available
+                        setCandidate((prev) => prev ? { ...prev, status: 'contacted', contacted_at: new Date().toISOString() } : prev);
+                      } catch (e) {
+                        console.error('Failed to update status', e);
+                      }
+                    }}
+                    className="w-full px-4 py-3 bg-white border border-gray-200 text-gray-900 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    Mark as Contacted
+                  </button>
+                )}
+                {candidate.linkedin_url && (
+                  <a
+                    href={candidate.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full px-4 py-3 bg-white border border-blue-200 text-blue-700 rounded-lg font-medium hover:bg-blue-50 text-center"
+                  >
+                    Message on LinkedIn
+                  </a>
+                )}
+                {candidate.email ? (
+                  <a
+                    href={getMailtoLink()}
+                    className="block w-full px-4 py-3 bg-white border border-gray-200 text-gray-900 rounded-lg font-medium hover:bg-gray-50 text-center"
+                  >
+                    Send Email
+                  </a>
+                ) : (
+                  <button
+                    onClick={handleEnrichEmail}
+                    disabled={enriching}
+                    className="w-full px-4 py-3 bg-white border border-purple-200 text-purple-700 rounded-lg font-medium hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Find verified email via Clado enrichment (~$0.01–$0.03)"
+                  >
+                    {enriching ? 'Enriching…' : enrichError ? enrichError : 'Get Email'}
+                  </button>
+                )}
                 <button
                   onClick={handleSave}
                   className="w-full px-4 py-3 bg-white border border-gray-200 text-gray-900 rounded-lg font-medium hover:bg-gray-50"

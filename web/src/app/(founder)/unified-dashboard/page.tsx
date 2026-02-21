@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getCurrentOrg, getRoles, type Role } from '@/lib/api';
+import { enrichCandidateEmail } from '@/lib/agencity-api';
 
 // Types
 interface AgencityCandidate {
   id: string;
   name: string;
-  email: string;
+  email?: string;
   title: string;
   company: string;
   location: string;
@@ -677,6 +678,27 @@ function CandidateCard({
   candidate: AgencityCandidate;
   compact?: boolean;
 }) {
+  const [enrichedEmail, setEnrichedEmail] = useState<string | null>(candidate.email || null);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+
+  const handleEnrichEmail = async () => {
+    setEnriching(true);
+    setEnrichError(null);
+    try {
+      const result = await enrichCandidateEmail(candidate.id);
+      if (result.data?.email) {
+        setEnrichedEmail(result.data.email);
+      } else {
+        setEnrichError('Not found');
+      }
+    } catch {
+      setEnrichError('Failed');
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const warmthColors = {
     network: 'text-green-700 bg-green-50',
     warm: 'text-yellow-700 bg-yellow-50',
@@ -813,6 +835,32 @@ function CandidateCard({
             <button className="px-4 py-2 bg-white border border-gray-200 text-gray-900 text-sm rounded-lg hover:bg-gray-50">
               Save
             </button>
+            {candidate.linkedin_url ? (
+              <a
+                href={candidate.linkedin_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 bg-white border border-blue-200 text-blue-700 text-sm rounded-lg hover:bg-blue-50"
+              >
+                LinkedIn
+              </a>
+            ) : enrichedEmail ? (
+              <a
+                href={`mailto:${enrichedEmail}?subject=${encodeURIComponent('Opportunity via ProofHire')}&body=${encodeURIComponent(`Hi ${candidate.name},\n\n`)}`}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-900 text-sm rounded-lg hover:bg-gray-50"
+              >
+                Send Email
+              </a>
+            ) : (
+              <button
+                onClick={handleEnrichEmail}
+                disabled={enriching}
+                className="px-4 py-2 bg-white border border-purple-200 text-purple-700 text-sm rounded-lg hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Find verified email via Clado enrichment (~$0.01–$0.03)"
+              >
+                {enriching ? 'Enriching…' : enrichError ?? 'Get Email'}
+              </button>
+            )}
             {candidate.status === 'sourced' && (
               <button className="px-4 py-2 bg-white border border-gray-200 text-gray-900 text-sm rounded-lg hover:bg-gray-50">
                 Invite to ProofHire

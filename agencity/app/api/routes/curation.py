@@ -174,6 +174,62 @@ async def get_candidate_context(
         raise HTTPException(status_code=500, detail=f"Failed to get context: {str(e)}")
 
 
+@router.post("/candidate/{person_id}/enrich-email")
+async def enrich_candidate_email(
+    person_id: str,
+    auth: CompanyAuth = Depends(get_current_company),
+):
+    """
+    Enrich a candidate's contact info (email) via Clado.
+
+    Uses waterfall: cached profile first ($0.01), then real-time scrape ($0.02).
+    Returns the email if found, or null if Clado doesn't have it.
+
+    Cost: $0.01–$0.03 per call.
+    """
+    from app.services.external_search.clado_client import clado_client
+    from app.core.database import get_supabase_client
+
+    supabase = get_supabase_client()
+
+    # Fetch the candidate's LinkedIn URL from Supabase
+    result = supabase.table('people') \
+        .select('id, linkedin_url, email') \
+        .eq('id', person_id) \
+        .eq('company_id', auth.company_id) \
+        .single() \
+        .execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    person = result.data
+
+    # Return cached email if we already have it
+    if person.get('email'):
+        return {'email': person['email'], 'source': 'cached'}
+
+    linkedin_url = person.get('linkedin_url')
+    if not linkedin_url:
+        raise HTTPException(status_code=422, detail="Candidate has no LinkedIn URL — cannot enrich")
+
+    if not clado_client.enabled:
+        raise HTTPException(status_code=503, detail="Enrichment service not configured")
+
+    profile = await clado_client.get_profile_with_fallback(linkedin_url)
+
+    if not profile or not profile.email:
+        return {'email': None, 'source': 'clado', 'message': 'Email not found in enrichment data'}
+
+    # Persist the email back to Supabase so we don't re-charge on future calls
+    supabase.table('people') \
+        .update({'email': profile.email}) \
+        .eq('id', person_id) \
+        .execute()
+
+    return {'email': profile.email, 'source': 'clado'}
+
+
 @router.post("/candidate/{person_id}/feedback")
 async def record_founder_feedback(
     person_id: str,

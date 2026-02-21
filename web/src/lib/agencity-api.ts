@@ -1,23 +1,59 @@
 /**
- * API client for Agencity integration
+ * API client for Agencity backend
+ * Aligned with real backend endpoints
  */
 
-const AGENCITY_BASE = process.env.NEXT_PUBLIC_AGENCITY_URL || 'http://107.20.131.235';
+import type {
+  ApiResponse,
+  Company,
+  CompanyCreate,
+  CompanyCreateResponse,
+  CompanyWithDetails,
+  CompanyUMO,
+  Role,
+  RoleCreate,
+  DataSource,
+  SearchRequest,
+  SearchResponse,
+  CurationRequest,
+  CurationResponse,
+  CandidateContextResponse,
+  AISummary,
+  PipelineResponse,
+  PipelineStatus,
+  StatusUpdateResponse,
+  FeedbackRequest,
+  FeedbackStats,
+  ProofHireInviteRequest,
+  ProofHireInviteResponse,
+  CurationCacheResponse,
+  ProviderHealth,
+  NetworkIndex,
+  TimingAlert,
+  CompanyEvent,
+  IntroRequest,
+  IntroRequestResponse,
+  ApiKeyInfo,
+  CandidateResponse,
+} from './agencity-types';
 
-interface ApiResponse<T> {
-  data?: T;
-  error?: string;
+const AGENCITY_BASE =
+  process.env.NEXT_PUBLIC_AGENCITY_URL || 'http://107.20.131.235';
+
+function getApiKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('agencity_api_key');
 }
 
 async function fetchAgencity<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('agencity_token') : null;
+  const apiKey = getApiKey();
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
+    ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
     ...options.headers,
   };
 
@@ -34,102 +70,135 @@ async function fetchAgencity<T>(
     }
 
     return { data };
-  } catch (error) {
-    return { error: 'Network error' };
+  } catch {
+    return { error: 'Network error — is the backend running?' };
   }
 }
 
-// Types
-export interface AgencityCandidate {
-  id: string;
-  name: string;
-  email: string;
-  title: string;
-  company: string;
-  location?: string;
-  linkedin_url?: string;
-  score: number;
-  fit_score: number;
-  warmth_score: number;
-  timing_score?: number;
-  warmth_level: 'network' | 'warm' | 'cold';
-  warm_path?: {
-    type: 'direct' | 'school' | 'company' | '2nd_degree';
-    description: string;
-    connector?: string;
+async function fetchAgencityFormData<T>(
+  endpoint: string,
+  formData: FormData
+): Promise<ApiResponse<T>> {
+  const apiKey = getApiKey();
+
+  const headers: HeadersInit = {
+    ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
   };
-  skills: string[];
-  experience_years?: number;
-  timing_signals?: string[];
-  why_consider?: string;
-  unknowns?: string[];
-  github_url?: string;
-  status?: 'sourced' | 'contacted' | 'interviewing' | 'invited' | 'in_simulation' | 'reviewed';
+
+  try {
+    const response = await fetch(`${AGENCITY_BASE}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return { error: data.detail || 'An error occurred' };
+    }
+
+    return { data };
+  } catch {
+    return { error: 'Network error — is the backend running?' };
+  }
 }
 
-export interface SearchRequest {
-  company_id: string;
-  role_title: string;
-  required_skills: string[];
-  preferred_skills?: string[];
-  experience_level?: string;
-  include_external?: boolean;
-  include_timing?: boolean;
-  deep_research?: boolean;
-  limit?: number;
-  mode?: 'full' | 'quick' | 'network_only';
-}
+// ─── Company & Onboarding ───────────────────────────────────────────────────
 
-export interface SearchResponse {
-  candidates: AgencityCandidate[];
-  search_id: string;
-  mode: string;
-  total_count: number;
-  tier1_count: number;
-  tier2_count: number;
-  tier3_count: number;
-  search_time_ms: number;
-}
-
-export interface NetworkStats {
-  total_contacts: number;
-  companies: number;
-  schools: number;
-  engineers: number;
-  by_company: Record<string, number>;
-  by_school: Record<string, number>;
-  by_skill: Record<string, number>;
-}
-
-export interface SearchHistory {
-  id: string;
-  query: string;
-  role_title: string;
-  required_skills: string[];
-  results_count: number;
-  timestamp: string;
-  mode: string;
-}
-
-export interface SavedCandidate extends AgencityCandidate {
-  saved_at: string;
-  notes?: string;
-  tags?: string[];
-}
-
-// Network & Company Management
-export async function getNetworkStats(companyId: string) {
-  return fetchAgencity<NetworkStats>(`/api/v3/network/${companyId}/stats`);
-}
-
-export async function importNetwork(companyId: string, source: 'linkedin' | 'csv', data: any) {
-  return fetchAgencity<{ imported: number }>(`/api/v3/network/${companyId}/import`, {
+export async function createCompany(company: CompanyCreate) {
+  return fetchAgencity<CompanyCreateResponse>('/api/companies', {
     method: 'POST',
-    body: JSON.stringify({ source, data }),
+    body: JSON.stringify(company),
   });
 }
 
-// Search
+export async function getCompany(companyId: string) {
+  return fetchAgencity<CompanyWithDetails>(`/api/companies/${companyId}`);
+}
+
+export async function updateCompany(
+  companyId: string,
+  updates: Partial<CompanyCreate>
+) {
+  return fetchAgencity<Company>(`/api/companies/${companyId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function completeOnboarding(companyId: string) {
+  return fetchAgencity<{ status: string; message: string }>(
+    `/api/companies/${companyId}/complete-onboarding`,
+    { method: 'POST' }
+  );
+}
+
+// ─── UMO (Company Operating Model) ─────────────────────────────────────────
+
+export async function getCompanyUMO(companyId: string) {
+  return fetchAgencity<CompanyUMO>(`/api/companies/${companyId}/umo`);
+}
+
+export async function updateCompanyUMO(
+  companyId: string,
+  umo: Partial<CompanyUMO>
+) {
+  return fetchAgencity<CompanyUMO>(`/api/companies/${companyId}/umo`, {
+    method: 'PUT',
+    body: JSON.stringify(umo),
+  });
+}
+
+// ─── Roles ──────────────────────────────────────────────────────────────────
+
+export async function createRole(companyId: string, role: RoleCreate) {
+  return fetchAgencity<Role>(`/api/companies/${companyId}/roles`, {
+    method: 'POST',
+    body: JSON.stringify(role),
+  });
+}
+
+export async function getCompanyRoles(companyId: string) {
+  return fetchAgencity<Role[]>(`/api/companies/${companyId}/roles`);
+}
+
+// ─── Data Import ────────────────────────────────────────────────────────────
+
+export async function importLinkedIn(companyId: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return fetchAgencityFormData<DataSource>(
+    `/api/companies/${companyId}/import/linkedin`,
+    formData
+  );
+}
+
+export async function importDatabase(companyId: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return fetchAgencityFormData<DataSource>(
+    `/api/companies/${companyId}/import/database`,
+    formData
+  );
+}
+
+export async function getImportHistory(companyId: string) {
+  return fetchAgencity<DataSource[]>(`/api/companies/${companyId}/imports`);
+}
+
+export async function getPeople(
+  companyId: string,
+  limit = 50,
+  offset = 0
+) {
+  return fetchAgencity<{ people: Record<string, unknown>[]; total: number }>(
+    `/api/companies/${companyId}/people?limit=${limit}&offset=${offset}`
+  );
+}
+
+// ─── Unified Search ─────────────────────────────────────────────────────────
+
 export async function searchCandidates(request: SearchRequest) {
   return fetchAgencity<SearchResponse>('/api/search', {
     method: 'POST',
@@ -137,141 +206,243 @@ export async function searchCandidates(request: SearchRequest) {
   });
 }
 
-export async function getSearchHistory(companyId: string, limit = 10) {
-  return fetchAgencity<SearchHistory[]>(
-    `/api/search/history?company_id=${companyId}&limit=${limit}`
+export async function searchNetworkOnly(request: SearchRequest) {
+  return fetchAgencity<SearchResponse>('/api/search/network-only', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function quickSearch(request: SearchRequest) {
+  return fetchAgencity<SearchResponse>('/api/search/quick', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getSearchHealth() {
+  return fetchAgencity<ProviderHealth>('/api/search/health');
+}
+
+// ─── Curation ───────────────────────────────────────────────────────────────
+
+export async function curateCandidates(request: CurationRequest) {
+  return fetchAgencity<CurationResponse>('/api/v1/curation/curate', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getCandidateContext(personId: string, roleId: string) {
+  return fetchAgencity<CandidateContextResponse>(
+    `/api/v1/curation/candidate/${personId}/context?role_id=${roleId}`
   );
 }
 
-export async function getSearchResults(searchId: string) {
-  return fetchAgencity<SearchResponse>(`/api/search/${searchId}/results`);
-}
-
-// Warm Paths
-export async function findWarmPaths(companyId: string, linkedinUrls: string[]) {
-  return fetchAgencity<{ paths: any[] }>(`/api/v3/warm-paths/${companyId}`, {
-    method: 'POST',
-    body: JSON.stringify({ linkedin_urls: linkedinUrls }),
-  });
-}
-
-export async function getWarmPath(companyId: string, candidateId: string) {
-  return fetchAgencity<any>(`/api/v3/warm-paths/${companyId}/${candidateId}`);
-}
-
-// Saved Candidates
-export async function saveCandidate(
-  companyId: string,
-  candidate: AgencityCandidate,
-  notes?: string,
-  tags?: string[]
+export async function recordCurationFeedback(
+  personId: string,
+  roleId: string,
+  decision: 'interview' | 'pass' | 'need_more_info',
+  notes?: string
 ) {
-  return fetchAgencity<SavedCandidate>(`/api/candidates/${companyId}/save`, {
-    method: 'POST',
-    body: JSON.stringify({ candidate, notes, tags }),
+  const params = new URLSearchParams({
+    role_id: roleId,
+    decision,
+    ...(notes && { notes }),
   });
+  return fetchAgencity<{ status: string }>(
+    `/api/v1/curation/candidate/${personId}/feedback?${params}`,
+    { method: 'POST' }
+  );
 }
 
-export async function getSavedCandidates(companyId: string) {
-  return fetchAgencity<SavedCandidate[]>(`/api/candidates/${companyId}/saved`);
+export async function regenerateSummary(personId: string, roleId: string) {
+  return fetchAgencity<{ status: string; ai_summary: AISummary }>(
+    `/api/v1/curation/candidate/${personId}/regenerate-summary?role_id=${roleId}`,
+    { method: 'POST' }
+  );
 }
 
-export async function unsaveCandidate(companyId: string, candidateId: string) {
-  return fetchAgencity<{ success: boolean }>(
-    `/api/candidates/${companyId}/saved/${candidateId}`,
+// ─── Curation Cache ─────────────────────────────────────────────────────────
+
+export async function generateCurationCache(
+  roleId: string,
+  forceRefresh = false
+) {
+  return fetchAgencity<CurationCacheResponse>(
+    '/api/curation-cache/generate',
     {
-      method: 'DELETE',
+      method: 'POST',
+      body: JSON.stringify({ role_id: roleId, force_refresh: forceRefresh }),
     }
   );
+}
+
+export async function generateAllCaches(forceRefresh = false) {
+  return fetchAgencity<{
+    total_roles: number;
+    cached: number;
+    processing: number;
+    pending: number;
+    failed: number;
+  }>('/api/curation-cache/generate-all', {
+    method: 'POST',
+    body: JSON.stringify({ force_refresh: forceRefresh }),
+  });
+}
+
+export async function getCacheStatus() {
+  return fetchAgencity<{
+    total_roles: number;
+    cached: number;
+    processing: number;
+    pending: number;
+    failed: number;
+  }>('/api/curation-cache/status');
+}
+
+// ─── Pipeline ───────────────────────────────────────────────────────────────
+
+export async function getPipeline(status?: PipelineStatus, limit = 50) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  return fetchAgencity<PipelineResponse>(`/api/pipeline?${params}`);
 }
 
 export async function updateCandidateStatus(
-  companyId: string,
   candidateId: string,
-  status: AgencityCandidate['status']
+  status: PipelineStatus,
+  notes?: string
 ) {
-  return fetchAgencity<SavedCandidate>(
-    `/api/candidates/${companyId}/saved/${candidateId}/status`,
+  return fetchAgencity<StatusUpdateResponse>(
+    `/api/candidates/${candidateId}/status`,
     {
-      method: 'PUT',
-      body: JSON.stringify({ status }),
+      method: 'PATCH',
+      body: JSON.stringify({ status, ...(notes && { notes }) }),
     }
   );
 }
 
-// Feedback
-export async function recordFeedback(
-  companyId: string,
-  candidateId: string,
-  action: 'viewed' | 'saved' | 'contacted' | 'interviewed' | 'hired' | 'rejected' | 'ignored',
-  searchId?: string
-) {
-  return fetchAgencity<{ success: boolean }>('/api/feedback/action', {
+// ─── Feedback ───────────────────────────────────────────────────────────────
+
+export async function recordFeedback(feedback: FeedbackRequest) {
+  return fetchAgencity<{ id: string; action: string; recorded_at: string }>(
+    '/api/feedback',
+    {
+      method: 'POST',
+      body: JSON.stringify(feedback),
+    }
+  );
+}
+
+export async function getFeedbackStats() {
+  return fetchAgencity<FeedbackStats>('/api/feedback/stats');
+}
+
+// ─── ProofHire Integration ──────────────────────────────────────────────────
+
+export async function inviteToProofHire(request: ProofHireInviteRequest) {
+  return fetchAgencity<ProofHireInviteResponse>('/api/proofhire/invite', {
     method: 'POST',
-    body: JSON.stringify({
-      company_id: companyId,
-      candidate_id: candidateId,
-      action,
-      search_id: searchId,
-      timestamp: new Date().toISOString(),
-    }),
+    body: JSON.stringify(request),
   });
 }
 
-// Intelligence
+// ─── Intelligence: Timing & Events ──────────────────────────────────────────
+
 export async function getTimingAlerts(companyId: string) {
-  return fetchAgencity<any[]>(`/api/v3/timing/alerts?company_id=${companyId}`);
+  return fetchAgencity<TimingAlert[]>(
+    `/api/v3/timing/alerts?company_id=${companyId}`
+  );
 }
 
 export async function getCompanyEvents(companyId: string) {
-  return fetchAgencity<any[]>(`/api/v3/company/events?company_id=${companyId}`);
+  return fetchAgencity<CompanyEvent[]>(
+    `/api/v3/company/events?company_id=${companyId}`
+  );
 }
 
-// Integration with ProofHire
-export async function inviteToProofHire(
-  candidateId: string,
-  proofhireRoleId: string,
-  agencitySearchId?: string
-) {
-  /**
-   * This will:
-   * 1. Get candidate details from Agencity
-   * 2. Create an application in ProofHire
-   * 3. Send invitation email
-   * 4. Track the linkage between Agencity candidate and ProofHire application
-   */
-  return fetchAgencity<{ application_id: string; invitation_sent: boolean }>(
-    '/api/integration/proofhire/invite',
+// ─── Activation: Intro Messages ─────────────────────────────────────────────
+
+export async function generateIntroRequests(request: IntroRequest) {
+  return fetchAgencity<IntroRequestResponse>(
+    '/api/v3/activate/reverse-reference',
     {
       method: 'POST',
-      body: JSON.stringify({
-        candidate_id: candidateId,
-        proofhire_role_id: proofhireRoleId,
-        agencity_search_id: agencitySearchId,
-      }),
+      body: JSON.stringify(request),
     }
   );
 }
 
-export async function syncWithProofHire(candidateId: string, applicationId: string) {
-  /**
-   * Link an Agencity candidate with a ProofHire application
-   * This enables tracking the full journey from sourcing to evaluation
-   */
-  return fetchAgencity<{ success: boolean }>('/api/integration/proofhire/sync', {
-    method: 'POST',
-    body: JSON.stringify({
-      candidate_id: candidateId,
-      application_id: applicationId,
-    }),
-  });
+// ─── Warm Paths (V3) ───────────────────────────────────────────────────────
+
+export async function findWarmPaths(
+  companyId: string,
+  linkedinUrls: string[]
+) {
+  return fetchAgencity<{ results: CandidateResponse[] }>(
+    `/api/v3/search/warm-paths/${companyId}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ linkedin_urls: linkedinUrls }),
+    }
+  );
 }
 
-export async function getCandidateJourney(candidateId: string) {
-  /**
-   * Get the full candidate journey across both systems:
-   * - Agencity: How they were found, warm paths, timing signals
-   * - ProofHire: Simulation results, brief, evaluation
-   */
-  return fetchAgencity<any>(`/api/integration/proofhire/journey/${candidateId}`);
+export async function getNetworkIndex(companyId: string) {
+  return fetchAgencity<NetworkIndex>(
+    `/api/v3/search/network-index/${companyId}`
+  );
 }
+
+// ─── API Key Management ─────────────────────────────────────────────────────
+
+export async function createApiKey(companyId: string, name = 'default') {
+  return fetchAgencity<{ api_key: string; api_key_prefix: string }>(
+    `/api/companies/${companyId}/api-keys`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }
+  );
+}
+
+export async function listApiKeys(companyId: string) {
+  return fetchAgencity<{ api_keys: ApiKeyInfo[] }>(
+    `/api/companies/${companyId}/api-keys`
+  );
+}
+
+// ─── Health ─────────────────────────────────────────────────────────────────
+
+export async function getProviderHealth() {
+  return fetchAgencity<ProviderHealth>('/api/search/health');
+}
+
+// Re-export types for convenience
+export type {
+  Company,
+  CompanyCreate,
+  CompanyCreateResponse,
+  CompanyWithDetails,
+  Role,
+  RoleCreate,
+  SearchRequest,
+  SearchResponse,
+  CandidateResponse,
+  CuratedCandidate,
+  CurationResponse,
+  PipelineCandidate,
+  PipelineResponse,
+  PipelineStatus,
+  TimingAlert,
+  CompanyEvent,
+  ProviderHealth,
+  FeedbackStats,
+  DataSource,
+  NetworkIndex,
+  ProofHireInviteRequest,
+  CandidateContextResponse,
+  AISummary,
+} from './agencity-types';

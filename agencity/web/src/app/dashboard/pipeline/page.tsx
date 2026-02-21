@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { getPipeline, updateCandidateStatus, PipelineCandidate as ApiPipelineCandidate } from '@/lib/api';
+import { getPipeline, updateCandidateStatus, enrichCandidateEmail, PipelineCandidate as ApiPipelineCandidate } from '@/lib/api';
 
 // Types for candidate pipeline
 interface CandidatePipeline {
   id: string;
   name: string;
-  email: string;
+  email?: string;
+  linkedin_url?: string;
   title: string;
   company: string;
 
@@ -218,6 +219,26 @@ function CandidateRow({
 }) {
   const [showActions, setShowActions] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichedEmail, setEnrichedEmail] = useState<string | null>(candidate.email || null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+
+  const handleEnrichEmail = async () => {
+    setEnriching(true);
+    setEnrichError(null);
+    try {
+      const result = await enrichCandidateEmail(candidate.id);
+      if (result.email) {
+        setEnrichedEmail(result.email);
+      } else {
+        setEnrichError('No email found');
+      }
+    } catch {
+      setEnrichError('Enrichment failed');
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   const handleUpdateStatus = async (newStatus: 'sourced' | 'contacted' | 'scheduled') => {
     setUpdating(true);
@@ -332,12 +353,33 @@ function CandidateRow({
                 <button className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
                   Add Note
                 </button>
-                <a
-                  href={`mailto:${candidate.email}`}
-                  className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
-                >
-                  Send Email
-                </a>
+                {candidate.linkedin_url && (
+                  <a
+                    href={candidate.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-white border border-blue-200 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-50"
+                  >
+                    Message on LinkedIn
+                  </a>
+                )}
+                {enrichedEmail ? (
+                  <a
+                    href={`mailto:${enrichedEmail}`}
+                    className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
+                  >
+                    Send Email
+                  </a>
+                ) : (
+                  <button
+                    onClick={handleEnrichEmail}
+                    disabled={enriching}
+                    className="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-sm font-medium rounded-lg hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Find verified email via Clado enrichment (~$0.01–$0.03)"
+                  >
+                    {enriching ? 'Enriching…' : enrichError ? enrichError : 'Get Email'}
+                  </button>
+                )}
               </div>
 
               {/* Undo Button */}

@@ -1005,6 +1005,7 @@ export interface PipelineCandidate {
   agencity_candidate_id: string;
   name: string;
   email?: string;
+  linkedin_url?: string;
   title?: string;
   company?: string;
   warmth_score: number;
@@ -1063,6 +1064,12 @@ export async function updateCandidateStatus(
     method: 'PATCH',
     body: JSON.stringify(update),
   });
+}
+
+export async function enrichCandidateEmail(
+  personId: string
+): Promise<{ email: string | null; source: string; message?: string }> {
+  return request(`/v1/curation/candidate/${personId}/enrich-email`, { method: 'POST' });
 }
 
 export async function recordFeedback(feedback: {
