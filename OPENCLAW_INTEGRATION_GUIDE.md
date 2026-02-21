@@ -34,17 +34,7 @@ Each customer gets their own isolated VM running the full OpenClaw + Agencity st
 - **Compliance** - Easy GDPR/SOC2 compliance with data isolation
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   WEB ORCHESTRATION LAYER                        │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    Your Web Dashboard                    │    │
-│  │  - Customer authentication (Auth0/Clerk)                 │    │
-│  │  - VM provisioning & lifecycle                           │    │
-│  │  - OAuth flows via Composio                              │    │
-│  │  - Billing (Stripe)                                      │    │
-│  │  - Audit logging                                         │    │
-│  └─────────────────────────────────────────────────────────┘    │
-└──────────────────────────┬──────────────────────────────────────┘
+1─────┘
                            │
          ┌─────────────────┼─────────────────┐
          ▼                 ▼                 ▼
