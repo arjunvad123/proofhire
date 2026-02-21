@@ -1,13 +1,18 @@
 """
 E2E test for the unified search pipeline with cache + research agent team.
 
-Tests:
-1. Full search with caching (no deep research)
-2. Cache verification - confirm candidates stored
-3. Second search - confirm cache hits (no API re-calls)
-4. Deep research on top 3 (Claude Research Agent Team)
+Conservative on API usage:
+- Single search (no redundant second search — cache is verified inline)
+- Deep research only if explicitly requested via --research flag
+- Clado enrichment capped at 3 candidates
+- Limit results to 10
+
+Usage:
+    python scripts/test_e2e_cache_research.py              # search only (no deep research)
+    python scripts/test_e2e_cache_research.py --research    # search + deep research on top 3
 """
 
+import argparse
 import asyncio
 import sys
 import time
@@ -25,7 +30,7 @@ REQUIRED_SKILLS = ["Python", "React"]
 PREFERRED_SKILLS = ["FastAPI", "TypeScript"]
 
 
-def print_candidates(candidates, max_show=15):
+def print_candidates(candidates, max_show=10):
     """Pretty-print candidate list."""
     for i, c in enumerate(candidates[:max_show]):
         tier_label = {1: "NET", 2: "WARM", 3: "COLD"}.get(c.tier, "?")
@@ -47,7 +52,6 @@ def print_candidates(candidates, max_show=15):
             if connector.linkedin_url:
                 print(f"      Connector LI: {connector.linkedin_url}")
             if c.warm_path.suggested_message:
-                # Show first line of suggested message
                 first_line = c.warm_path.suggested_message.strip().split('\n')[0]
                 print(f"      Message: {first_line}")
         if c.skills:
@@ -60,10 +64,10 @@ def print_candidates(candidates, max_show=15):
         print()
 
 
-async def test_search_with_cache():
-    """Test 1: Full search pipeline with caching."""
+async def test_search(run_research: bool = False):
+    """Single search with optional deep research."""
     print("=" * 80)
-    print("TEST 1: Full Search (cache write)")
+    print(f"SEARCH {'+ RESEARCH ' if run_research else ''}(conservative mode)")
     print("=" * 80)
     print()
 
@@ -74,8 +78,8 @@ async def test_search_with_cache():
         preferred_skills=PREFERRED_SKILLS,
         include_external=True,
         include_timing=True,
-        deep_research=False,
-        limit=15,
+        deep_research=run_research,
+        limit=10,
     )
 
     print()
@@ -100,173 +104,84 @@ async def test_search_with_cache():
             print(f"  ! {d}")
         print()
 
-    print("--- TOP 15 CANDIDATES ---")
+    print(f"--- TOP {min(10, len(result.candidates))} CANDIDATES ---")
     print_candidates(result.candidates)
 
-    return result
-
-
-async def test_cache_verification(first_result):
-    """Test 2: Verify candidates were cached."""
-    print("=" * 80)
-    print("TEST 2: Cache Verification")
-    print("=" * 80)
-    print()
-
+    # --- Inline cache verification (no extra API calls) ---
     ext_urls = [
         c.linkedin_url
-        for c in first_result.candidates
+        for c in result.candidates
         if c.linkedin_url and c.source == "external"
     ]
-    print(f"External candidates with LinkedIn URLs: {len(ext_urls)}")
 
-    if not ext_urls:
-        print("  No external candidates to verify")
-        return
-
-    cached = await company_db.get_cached_external_candidates(ext_urls, max_age_days=1)
-    print(f"Cache hits: {len(cached)} / {len(ext_urls)}")
-    print()
-
-    for url, rec in list(cached.items())[:5]:
-        enrichment = rec.get("enrichment_source") or "none"
-        n_skills = len(rec.get("skills") or [])
-        print(
-            f"  {rec['full_name']:30s} | source={rec.get('discovery_source'):10s} "
-            f"| enrichment={enrichment:15s} | skills={n_skills}"
-        )
-
-    if len(cached) == len(ext_urls):
-        print(f"\n  PASS: All {len(ext_urls)} external candidates cached")
-    else:
-        missing = len(ext_urls) - len(cached)
-        print(f"\n  PARTIAL: {missing} candidates not in cache (may lack LinkedIn URLs)")
-
-
-async def test_second_search():
-    """Test 3: Second search should use cache (no Firecrawl credits burned)."""
-    print()
-    print("=" * 80)
-    print("TEST 3: Second Search (cache read)")
-    print("=" * 80)
-    print()
-
-    start = time.time()
-    result = await unified_search.search(
-        company_id=COMPANY_ID,
-        role_title=ROLE_TITLE,
-        required_skills=REQUIRED_SKILLS,
-        preferred_skills=PREFERRED_SKILLS,
-        include_external=True,
-        include_timing=True,
-        deep_research=False,
-        limit=15,
-    )
-    duration = time.time() - start
-
-    print()
-    print(f"Second search duration: {duration:.1f}s")
-    print(f"Total found: {result.total_found}")
-    print(f"Tier 1: {result.tier_1_count}, Tier 2: {result.tier_2_count}, Tier 3: {result.tier_3_count}")
-    print()
-
-    # The key verification: cache hits should be logged
-    # (we can see from the print output above)
-
-    return result
-
-
-async def test_deep_research():
-    """Test 4: Deep research on top 3 candidates (Claude Agent Team)."""
-    if not settings.anthropic_api_key:
-        print()
-        print("=" * 80)
-        print("TEST 4: SKIPPED (no ANTHROPIC_API_KEY)")
-        print("=" * 80)
-        return None
-
-    print()
-    print("=" * 80)
-    print("TEST 4: Deep Research (Claude Agent Team)")
-    print("=" * 80)
-    print()
-
-    result = await unified_search.search(
-        company_id=COMPANY_ID,
-        role_title=ROLE_TITLE,
-        required_skills=REQUIRED_SKILLS,
-        preferred_skills=PREFERRED_SKILLS,
-        include_external=True,
-        include_timing=True,
-        deep_research=True,
-        limit=10,
-    )
-
-    print()
-    print("--- RESEARCHED CANDIDATES ---")
-    for i, c in enumerate(result.candidates[:3]):
-        print(f"\n  {i+1}. {c.full_name} ({c.current_title} @ {c.current_company})")
-        if c.deep_research:
-            findings = c.deep_research.get("findings", [])
-            confidence = c.deep_research.get("identity_confidence", 0)
-            total_searches = c.deep_research.get("total_searches", 0)
-            conflicts = c.deep_research.get("conflicts", [])
-
-            print(f"     Identity confidence: {confidence:.0%}")
-            print(f"     Web searches used: {total_searches}")
-            print(f"     Findings: {len(findings)}")
-            for f in findings[:5]:
-                verified = "V" if f.get("verified") else "?"
-                conf = f.get("confidence", 0)
-                print(
-                    f"       [{verified}] {f.get('category', '?'):12s} | "
-                    f"{f.get('title', '?')[:50]} ({conf:.0%})"
-                )
-            if conflicts:
-                print(f"     Conflicts: {'; '.join(conflicts)}")
-
-            # Citations
-            citations = c.deep_research.get("citations", [])
-            if citations:
-                print(f"     Citations: {len(citations)}")
-                for cite in citations[:3]:
-                    print(f"       - {cite.get('title', '?')[:50]}: {cite.get('url', '?')[:60]}")
+    if ext_urls:
+        print("--- CACHE CHECK ---")
+        cached = await company_db.get_cached_external_candidates(ext_urls, max_age_days=1)
+        print(f"  External with LinkedIn URLs: {len(ext_urls)}")
+        print(f"  Cache hits: {len(cached)} / {len(ext_urls)}")
+        if len(cached) == len(ext_urls):
+            print(f"  PASS: All cached")
         else:
-            print("     No research data")
+            print(f"  PARTIAL: {len(ext_urls) - len(cached)} not in cache")
+        print()
 
-        if c.research_highlights:
-            print(f"     Highlights:")
-            for h in c.research_highlights:
-                print(f"       {h}")
+    # --- Research details (only if run_research was True) ---
+    if run_research:
+        print("--- RESEARCH DETAILS ---")
+        for i, c in enumerate(result.candidates[:3]):
+            print(f"\n  {i+1}. {c.full_name} ({c.current_title} @ {c.current_company})")
+            if c.deep_research:
+                findings = c.deep_research.get("findings", [])
+                confidence = c.deep_research.get("identity_confidence", 0)
+                total_searches = c.deep_research.get("total_searches", 0)
+                conflicts = c.deep_research.get("conflicts", [])
+
+                print(f"     Identity confidence: {confidence:.0%}")
+                print(f"     Web searches used: {total_searches}")
+                print(f"     Findings: {len(findings)}")
+                for f in findings[:5]:
+                    verified = "V" if f.get("verified") else "?"
+                    conf = f.get("confidence", 0)
+                    print(
+                        f"       [{verified}] {f.get('category', '?'):12s} | "
+                        f"{f.get('title', '?')[:50]} ({conf:.0%})"
+                    )
+                if conflicts:
+                    print(f"     Conflicts: {'; '.join(conflicts)}")
+
+                citations = c.deep_research.get("citations", [])
+                if citations:
+                    print(f"     Citations: {len(citations)}")
+                    for cite in citations[:3]:
+                        print(f"       - {cite.get('title', '?')[:50]}: {cite.get('url', '?')[:60]}")
+            else:
+                print("     No research data")
+
+            if c.research_highlights:
+                print(f"     Highlights:")
+                for h in c.research_highlights:
+                    print(f"       {h}")
 
     return result
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="E2E search test (conservative API usage)")
+    parser.add_argument("--research", action="store_true", help="Run deep research on top 3")
+    args = parser.parse_args()
+
     print()
     print("ProofHire E2E Search Test")
     print(f"Company: Confido ({COMPANY_ID})")
     print(f"Role: {ROLE_TITLE}")
     print(f"Skills: {REQUIRED_SKILLS}")
-    print(f"Anthropic key: {'configured' if settings.anthropic_api_key else 'NOT SET'}")
-    print(f"Web search enabled: {settings.anthropic_web_search_enabled}")
+    print(f"Research: {'ON' if args.research else 'OFF (use --research to enable)'}")
     print()
 
-    # Test 1: Search with cache write
-    result1 = await test_search_with_cache()
+    await test_search(run_research=args.research)
 
-    # Test 2: Verify cache
-    await test_cache_verification(result1)
-
-    # Test 3: Second search (cache read)
-    await test_second_search()
-
-    # Test 4: Deep research
-    await test_deep_research()
-
-    print()
     print("=" * 80)
-    print("ALL TESTS COMPLETE")
+    print("DONE")
     print("=" * 80)
 
 

@@ -431,11 +431,17 @@ class WarmPathFinder:
         candidate: CladoProfile,
         index: NetworkIndex
     ) -> list[WarmPath]:
-        """Find network contacts who worked at same companies, scored by quality."""
+        """Find network contacts who worked at same companies, with temporal overlap checking."""
         paths = []
 
-        def _score_and_pick_best(contacts, candidate_company, is_current_company):
-            """Score all contacts for a company match, return the best one as a WarmPath or None."""
+        def _score_all_connectors(
+            contacts: list[NetworkContact],
+            candidate_company: str,
+            candidate_start: Optional[str],
+            candidate_end: Optional[str],
+            is_current_company: bool,
+        ) -> Optional[WarmPath]:
+            """Score all contacts, check temporal overlap, return WarmPath with multiple connectors."""
             if not contacts:
                 return None
 
@@ -444,12 +450,10 @@ class WarmPathFinder:
             company_index = index.companies.get(normalized_company)
             contact_count = company_index.count if company_index else len(contacts)
 
-            # Score all contacts and pick the best
-            best_contact = None
-            best_quality = -1.0
-            best_signals = []
+            scored_connectors: list[ScoredConnector] = []
 
             for contact in contacts:
+                # Base quality scoring
                 quality, signals = score_connector(
                     connector=contact,
                     candidate_title=candidate.current_title or "",
@@ -457,36 +461,100 @@ class WarmPathFinder:
                     candidate_company=candidate_company,
                 )
 
-                # Also check company match quality
+                # Check company match quality to filter false positives
                 match_qual = _score_company_match(contact.current_company, candidate_company)
                 if match_qual < 0.35 and is_current_company:
-                    continue  # Skip false positive company matches
+                    continue
 
-                if quality > best_quality:
-                    best_quality = quality
-                    best_contact = contact
-                    best_signals = signals
+                # Check temporal overlap
+                connector_exp = _find_connector_experience_at_company(contact, candidate_company)
+                has_overlap = False
+                overlap_months = 0
 
-            if best_contact is None:
+                if connector_exp:
+                    has_overlap, overlap_months = _check_temporal_overlap(
+                        connector_exp.get("start_date"),
+                        connector_exp.get("end_date"),
+                        candidate_start,
+                        candidate_end,
+                        min_overlap_months=3
+                    )
+
+                # Boost quality for verified temporal overlap
+                if has_overlap:
+                    # Boost based on overlap duration (max +0.2 for 2+ years)
+                    overlap_boost = min(overlap_months / 24, 1.0) * 0.2
+                    quality = min(quality + overlap_boost, 1.0)
+                    signals.append(f"Verified overlap: {overlap_months} months")
+                elif connector_exp and not has_overlap:
+                    # Penalize if we have dates but no overlap
+                    quality *= 0.6
+                    signals.append("No temporal overlap (different time periods)")
+
+                # Determine if currently working together
+                is_current = (
+                    contact.current_company and
+                    self._companies_match(contact.current_company, candidate_company) and
+                    is_current_company
+                )
+
+                # Generate personalized message
+                message = self._generate_company_intro_message(
+                    contact, candidate, candidate_company, is_current, has_overlap, overlap_months
+                )
+
+                scored_connectors.append(ScoredConnector(
+                    connector=contact,
+                    quality_score=round(quality, 3),
+                    quality_signals=signals,
+                    has_temporal_overlap=has_overlap,
+                    overlap_months=overlap_months,
+                    suggested_message=message,
+                ))
+
+            if not scored_connectors:
                 return None
 
+            # Sort by quality (temporal overlap gives boost, so it factors in)
+            scored_connectors.sort(key=lambda c: c.quality_score, reverse=True)
+
+            # Best connector for backwards compatibility
+            best = scored_connectors[0]
+
+            # Calculate warmth based on best connector
             is_current = (
-                best_contact.current_company and
-                self._companies_match(best_contact.current_company, candidate_company)
+                best.connector.current_company and
+                self._companies_match(best.connector.current_company, candidate_company) and
+                is_current_company
             )
-            base_warmth = self.WARMTH_COMPANY_CURRENT if (is_current and is_current_company) else self.WARMTH_COMPANY_PAST
-            adjusted_warmth = base_warmth * best_quality
+
+            # Higher warmth for verified temporal overlap
+            if best.has_temporal_overlap:
+                base_warmth = self.WARMTH_COMPANY_CURRENT if is_current else self.WARMTH_COMPANY_PAST
+            else:
+                # Lower warmth if no verified overlap
+                base_warmth = (self.WARMTH_COMPANY_CURRENT if is_current else self.WARMTH_COMPANY_PAST) * 0.7
+
+            adjusted_warmth = base_warmth * best.quality_score
+
+            # Build relationship string
+            if is_current and best.has_temporal_overlap:
+                relationship = f"Currently work together at {candidate_company}"
+            elif best.has_temporal_overlap:
+                relationship = f"Overlapped at {candidate_company} for {best.overlap_months} months"
+            else:
+                relationship = f"Both worked at {candidate_company}"
 
             return WarmPath(
                 path_type="company_overlap",
                 warmth_score=adjusted_warmth,
-                connector=best_contact,
-                relationship=f"{'Currently work together' if is_current else 'Both worked'} at {candidate_company}",
-                suggested_message=self._generate_company_intro_message(
-                    best_contact, candidate, candidate_company, is_current
-                ),
-                connector_quality=round(best_quality, 2),
-                quality_signals=best_signals,
+                connector=best.connector,
+                relationship=relationship,
+                suggested_message=best.suggested_message,
+                connector_quality=best.quality_score,
+                quality_signals=best.quality_signals,
+                all_connectors=scored_connectors[:5],  # Top 5 connectors
+                total_connectors=len(scored_connectors),
             )
 
         # Check current company
@@ -494,7 +562,27 @@ class WarmPathFinder:
             contacts = network_index_service.find_company_contacts(
                 index, candidate.current_company
             )
-            path = _score_and_pick_best(contacts, candidate.current_company, is_current_company=True)
+            # For current company, candidate is still there (no end date)
+            path = _score_all_connectors(
+                contacts,
+                candidate.current_company,
+                candidate_start=None,  # We need to find this from experience
+                candidate_end=None,
+                is_current_company=True,
+            )
+
+            # Try to find candidate's start date at current company
+            for exp in candidate.experience:
+                if exp.get("company") == candidate.current_company and not exp.get("end_date"):
+                    path = _score_all_connectors(
+                        contacts,
+                        candidate.current_company,
+                        candidate_start=exp.get("start_date"),
+                        candidate_end=None,
+                        is_current_company=True,
+                    )
+                    break
+
             if path:
                 paths.append(path)
 
@@ -503,7 +591,13 @@ class WarmPathFinder:
             company = exp.get("company")
             if company and company != candidate.current_company:
                 contacts = network_index_service.find_company_contacts(index, company)
-                path = _score_and_pick_best(contacts, company, is_current_company=False)
+                path = _score_all_connectors(
+                    contacts,
+                    company,
+                    candidate_start=exp.get("start_date"),
+                    candidate_end=exp.get("end_date"),
+                    is_current_company=False,
+                )
                 if path:
                     paths.append(path)
 
@@ -524,28 +618,48 @@ class WarmPathFinder:
                 if not contacts:
                     continue
 
-                # Pick the best connector by seniority
-                best_contact = max(contacts, key=lambda c: _score_seniority(c.current_title))
-                seniority = _score_seniority(best_contact.current_title)
-                quality = seniority  # For school overlaps, quality = seniority
-                signals = []
-                if seniority >= 0.9:
-                    signals.append(f"Senior connector ({best_contact.current_title or 'unknown'})")
-                elif seniority <= 0.3:
-                    signals.append(f"Junior connector ({best_contact.current_title or 'unknown'})")
+                # Score all connectors
+                scored_connectors: list[ScoredConnector] = []
 
-                adjusted_warmth = self.WARMTH_SCHOOL * quality
+                for contact in contacts:
+                    seniority = _score_seniority(contact.current_title)
+                    quality = seniority  # For school overlaps, quality = seniority
+                    signals = []
+
+                    if seniority >= 0.9:
+                        signals.append(f"Senior connector ({contact.current_title or 'unknown'})")
+                    elif seniority <= 0.3:
+                        signals.append(f"Junior connector ({contact.current_title or 'unknown'})")
+                    else:
+                        signals.append(f"{contact.current_title or 'Unknown role'}")
+
+                    message = self._generate_school_intro_message(contact, candidate, school)
+
+                    scored_connectors.append(ScoredConnector(
+                        connector=contact,
+                        quality_score=round(quality, 3),
+                        quality_signals=signals,
+                        has_temporal_overlap=False,  # Not checking school overlap timing
+                        overlap_months=0,
+                        suggested_message=message,
+                    ))
+
+                # Sort by quality
+                scored_connectors.sort(key=lambda c: c.quality_score, reverse=True)
+
+                best = scored_connectors[0]
+                adjusted_warmth = self.WARMTH_SCHOOL * best.quality_score
 
                 paths.append(WarmPath(
                     path_type="school_overlap",
                     warmth_score=adjusted_warmth,
-                    connector=best_contact,
+                    connector=best.connector,
                     relationship=f"Both attended {school}",
-                    suggested_message=self._generate_school_intro_message(
-                        best_contact, candidate, school
-                    ),
-                    connector_quality=round(quality, 2),
-                    quality_signals=signals,
+                    suggested_message=best.suggested_message,
+                    connector_quality=best.quality_score,
+                    quality_signals=best.quality_signals,
+                    all_connectors=scored_connectors[:5],  # Top 5 connectors
+                    total_connectors=len(scored_connectors),
                 ))
 
         return paths
@@ -588,7 +702,9 @@ class WarmPathFinder:
         connector: NetworkContact,
         candidate: CladoProfile,
         company: str,
-        is_current: bool
+        is_current: bool,
+        has_temporal_overlap: bool = False,
+        overlap_months: int = 0,
     ) -> str:
         """Generate a warm intro request message for company overlap."""
         connector_first = connector.full_name.split()[0]
@@ -600,7 +716,22 @@ class WarmPathFinder:
 Would you be open to making an intro? I'd love to learn more about their work.
 
 Thanks!"""
+        elif has_temporal_overlap and overlap_months >= 6:
+            # Strong overlap - they likely know each other
+            return f"""Hey {connector_first}! I'm hiring and noticed you and {candidate_first} overlapped at {company} for about {overlap_months // 12} year{'s' if overlap_months >= 24 else ''}{f' and {overlap_months % 12} months' if overlap_months % 12 > 0 and overlap_months >= 12 else ''}.
+
+Any chance you know them and could make an intro? Would love your take on them too.
+
+Thanks!"""
+        elif has_temporal_overlap:
+            # Some overlap
+            return f"""Hey {connector_first}! I'm hiring and noticed you and {candidate_first} overlapped at {company}.
+
+Any chance you crossed paths and could make an intro?
+
+Thanks!"""
         else:
+            # No verified overlap
             return f"""Hey {connector_first}! I'm hiring and noticed you and {candidate_first} both worked at {company}.
 
 Any chance you'd be open to making an intro? Would love to hear your take on them too.
