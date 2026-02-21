@@ -20,6 +20,7 @@ export function createNetworkIntelTool(opts: ApiOpts) {
     ].join(" "),
 
     parameters: Type.Object({
+      company_id: Type.String({ description: "Company UUID (required)" }),
       candidate_name: Type.Optional(
         Type.String({
           description: "Full name of the candidate to research",
@@ -30,9 +31,6 @@ export function createNetworkIntelTool(opts: ApiOpts) {
           description: "Candidate UUID from a previous search",
         }),
       ),
-      company_id: Type.Optional(
-        Type.String({ description: "Company UUID" }),
-      ),
       linkedin_url: Type.Optional(
         Type.String({
           description: "LinkedIn profile URL of the candidate",
@@ -41,6 +39,11 @@ export function createNetworkIntelTool(opts: ApiOpts) {
     }),
 
     async execute(_id: string, params: Record<string, unknown>) {
+      const companyId = typeof params.company_id === "string" ? params.company_id.trim() : "";
+      if (!companyId) {
+        throw new Error("company_id is required for network intelligence lookups");
+      }
+
       const candidateName =
         typeof params.candidate_name === "string" ? params.candidate_name : "";
       const candidateId =
@@ -55,14 +58,16 @@ export function createNetworkIntelTool(opts: ApiOpts) {
       const body: Record<string, unknown> = {};
       if (candidateName.trim()) body.candidate_name = candidateName;
       if (candidateId.trim()) body.candidate_id = candidateId;
-      if (typeof params.company_id === "string" && params.company_id.trim()) {
-        body.company_id = params.company_id;
-      }
       if (typeof params.linkedin_url === "string" && params.linkedin_url.trim()) {
         body.linkedin_url = params.linkedin_url;
       }
 
-      const result = await agencityFetch(opts, "/api/intelligence/network", body);
+      // POST /api/v3/expansion/warm-paths/{company_id}
+      const result = await agencityFetch(
+        opts,
+        `/api/v3/expansion/warm-paths/${companyId}`,
+        body,
+      );
 
       return {
         content: [

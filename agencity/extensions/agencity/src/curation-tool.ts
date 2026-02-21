@@ -64,7 +64,8 @@ export function createCurationTool(opts: ApiOpts) {
         body.company_id = params.company_id;
       }
 
-      const result = await agencityFetch(opts, "/api/curate", body);
+      // POST /api/v1/curation/curate
+      const result = await agencityFetch(opts, "/api/v1/curation/curate", body);
 
       return {
         content: [

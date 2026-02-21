@@ -1,5 +1,5 @@
 {
-  "name": "@agencity/openclaw-plugin",
+  "name": "@agencity/agencity",
   "version": "0.1.0",
   "private": true,
   "description": "OpenClaw plugin that exposes Agencity hiring tools to the agent",
