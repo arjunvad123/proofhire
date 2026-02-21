@@ -940,6 +940,138 @@ class CompanyDBService:
 
         return None
 
+    # =========================================================================
+    # EXTERNAL CANDIDATE CACHE OPERATIONS
+    # =========================================================================
+
+    async def get_cached_external_candidates(
+        self,
+        linkedin_urls: list[str],
+        max_age_days: int = 7
+    ) -> dict[str, dict]:
+        """
+        Look up cached external candidates by LinkedIn URL.
+
+        Returns a dict mapping linkedin_url -> cached record for candidates
+        seen within max_age_days.
+        """
+        if not linkedin_urls:
+            return {}
+
+        # Supabase PostgREST uses `in` filter for multiple values
+        urls_filter = ",".join(f'"{url}"' for url in linkedin_urls)
+        params = {
+            "linkedin_url": f"in.({urls_filter})",
+            "last_seen_at": f"gte.{self._days_ago_iso(max_age_days)}",
+        }
+        result = await self._request("GET", "external_candidates", params=params)
+
+        if not result or not isinstance(result, list):
+            return {}
+
+        return {row["linkedin_url"]: row for row in result}
+
+    async def get_cached_candidate_by_url(
+        self,
+        linkedin_url: str,
+        max_age_days: int = 7
+    ) -> Optional[dict]:
+        """Look up a single cached external candidate."""
+        params = {
+            "linkedin_url": f"eq.{linkedin_url}",
+            "last_seen_at": f"gte.{self._days_ago_iso(max_age_days)}",
+        }
+        result = await self._request("GET", "external_candidates", params=params)
+
+        if result and isinstance(result, list) and len(result) > 0:
+            return result[0]
+        return None
+
+    async def upsert_external_candidate(self, candidate_data: dict) -> Optional[dict]:
+        """
+        Insert or update an external candidate record.
+
+        Uses linkedin_url as the conflict key for upsert.
+        """
+        now = datetime.utcnow().isoformat()
+        candidate_data["last_seen_at"] = now
+        candidate_data["updated_at"] = now
+
+        # Use Supabase upsert via Prefer header + on_conflict query param
+        url = f"{self.base_url}/rest/v1/external_candidates"
+        headers = {
+            **self.headers,
+            "Prefer": "return=representation,resolution=merge-duplicates",
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=candidate_data,
+                    params={"on_conflict": "linkedin_url"},
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                result = response.json()
+                if result and isinstance(result, list) and len(result) > 0:
+                    return result[0]
+                return None
+            except httpx.HTTPError as e:
+                logger.error(f"Failed to upsert external candidate: {e}")
+                return None
+
+    async def update_external_candidate_enrichment(
+        self,
+        linkedin_url: str,
+        enrichment_source: str,
+        enrichment_data: dict,
+        updated_fields: dict,
+    ) -> Optional[dict]:
+        """Update an external candidate with enrichment data."""
+        now = datetime.utcnow().isoformat()
+        updates = {
+            "enrichment_source": enrichment_source,
+            "enrichment_data": enrichment_data,
+            "updated_at": now,
+            **updated_fields,
+        }
+
+        params = {"linkedin_url": f"eq.{linkedin_url}"}
+        result = await self._request("PATCH", "external_candidates", updates, params)
+
+        if result and isinstance(result, list) and len(result) > 0:
+            return result[0]
+        return None
+
+    async def update_external_candidate_research(
+        self,
+        linkedin_url: str,
+        research_data: dict,
+        research_confidence: float,
+    ) -> Optional[dict]:
+        """Update an external candidate with research results."""
+        now = datetime.utcnow().isoformat()
+        updates = {
+            "research_data": research_data,
+            "research_confidence": research_confidence,
+            "last_researched_at": now,
+            "updated_at": now,
+        }
+
+        params = {"linkedin_url": f"eq.{linkedin_url}"}
+        result = await self._request("PATCH", "external_candidates", updates, params)
+
+        if result and isinstance(result, list) and len(result) > 0:
+            return result[0]
+        return None
+
+    def _days_ago_iso(self, days: int) -> str:
+        """Return ISO timestamp for N days ago."""
+        from datetime import timedelta
+        return (datetime.utcnow() - timedelta(days=days)).isoformat()
+
 
 # Global instance
 company_db = CompanyDBService()

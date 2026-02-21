@@ -25,7 +25,10 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 from app.services.company_db import company_db
 from app.services.network_index import network_index_service, NetworkIndex
-from app.services.warm_path_finder import warm_path_finder, WarmPath
+from app.services.warm_path_finder import (
+    warm_path_finder, WarmPath, score_connector, _score_company_match,
+    _score_seniority,
+)
 from app.services.external_search.clado_client import clado_client, CladoProfile
 from app.services.external_search.apollo_client import apollo_client, ApolloProfile
 from app.services.external_search.firecrawl_client import firecrawl_client, FirecrawlProfile
@@ -245,12 +248,16 @@ class UnifiedSearchEngine:
 
         # Step 6: Deep research top candidates if enabled
         researched_count = 0
-        if deep_research and settings.perplexity_api_key:
+        research_enabled = deep_research and (
+            (settings.anthropic_web_search_enabled and settings.anthropic_api_key)
+            or settings.perplexity_api_key
+        )
+        if research_enabled:
             print("\n🔬 Step 6: Deep researching top candidates...")
             all_candidates = await self._deep_research_top(
-                all_candidates, role_title, required_skills, top_n=5
+                all_candidates, role_title, required_skills, top_n=3
             )
-            researched_count = min(5, len(all_candidates))
+            researched_count = min(3, len(all_candidates))
             print(f"   Researched {researched_count} candidates")
 
         # Step 7: Build context for top candidates
@@ -372,61 +379,168 @@ class UnifiedSearchEngine:
                 firecrawl_client.search(eq.query, limit=15, location=location)
             )
 
-        # Run ALL providers in parallel (Clado + Apollo + multiple Firecrawl queries)
-        all_tasks = [
-            clado_client.search(search_query, limit=limit),
-            apollo_client.search(search_query, limit=limit, location=location),
-            *firecrawl_tasks,
-        ]
-        all_results = await asyncio.gather(*all_tasks)
-
-        clado_results = all_results[0]
-        apollo_results = all_results[1]
-        # Merge all Firecrawl results into one
-        firecrawl_profiles = []
-        for fc_result in all_results[2:]:
-            firecrawl_profiles.extend(fc_result.profiles)
+        # Run ENABLED providers in parallel (skip unconfigured ones gracefully)
         from app.services.external_search.firecrawl_client import FirecrawlSearchResult
+        from app.services.external_search.apollo_client import ApolloSearchResult as ApolloSR
+        from app.services.external_search.clado_client import CladoSearchResult as CladoSR
+
+        search_tasks = []
+        task_labels = []
+
+        # Clado
+        if clado_client.enabled:
+            search_tasks.append(clado_client.search(search_query, limit=limit))
+            task_labels.append("clado")
+        # Apollo
+        if apollo_client.enabled:
+            search_tasks.append(apollo_client.search(search_query, limit=limit, location=location))
+            task_labels.append("apollo")
+        # Firecrawl (multiple queries)
+        if firecrawl_client.enabled:
+            for ft in firecrawl_tasks:
+                search_tasks.append(ft)
+                task_labels.append("firecrawl")
+
+        # Log which providers are active
+        active_names = sorted(set(task_labels)) or ["none"]
+        skipped_names = [
+            name for name, client in [("clado", clado_client), ("apollo", apollo_client), ("firecrawl", firecrawl_client)]
+            if not client.enabled
+        ]
+        if skipped_names:
+            print(f"   Providers active: {', '.join(active_names)} | skipped (no API key): {', '.join(skipped_names)}")
+        else:
+            print(f"   Providers active: {', '.join(active_names)}")
+
+        all_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+        # Map results back to providers
+        clado_results = CladoSR(profiles=[], total_matches=0, query_interpreted="", search_id="")
+        apollo_results = ApolloSR(profiles=[], total_matches=0, query_used=search_query)
+        firecrawl_profiles = []
+
+        for label, result in zip(task_labels, all_results):
+            if isinstance(result, Exception):
+                logger.warning("Provider %s raised exception: %s", label, result)
+                continue
+            if label == "clado":
+                clado_results = result
+            elif label == "apollo":
+                apollo_results = result
+            elif label == "firecrawl":
+                firecrawl_profiles.extend(result.profiles)
+
         firecrawl_results = FirecrawlSearchResult(
             profiles=firecrawl_profiles,
             total_matches=len(firecrawl_profiles),
             query_used=search_query,
         )
 
-        # Health checks in parallel
-        clado_health, apollo_health, firecrawl_health = await asyncio.gather(
-            clado_client.health_check(),
-            apollo_client.health_check(),
-            firecrawl_client.health_check(),
-        )
+        # Health checks only for enabled providers
+        health_tasks = {}
+        if clado_client.enabled:
+            health_tasks["clado"] = clado_client.health_check()
+        if apollo_client.enabled:
+            health_tasks["apollo"] = apollo_client.health_check()
+        if firecrawl_client.enabled:
+            health_tasks["firecrawl"] = firecrawl_client.health_check()
+
+        health_results = {}
+        if health_tasks:
+            results_list = await asyncio.gather(*health_tasks.values(), return_exceptions=True)
+            for name, res in zip(health_tasks.keys(), results_list):
+                if isinstance(res, Exception):
+                    health_results[name] = {"provider": name, "ok": False, "reason": str(res)}
+                else:
+                    health_results[name] = res
+
+        # Fill in skipped providers as explicitly skipped (not unhealthy)
+        clado_health = health_results.get("clado", {"provider": "clado", "ok": False, "reason": "not_configured"})
+        apollo_health = health_results.get("apollo", {"provider": "apollo", "ok": False, "reason": "not_configured"})
+        firecrawl_health = health_results.get("firecrawl", {"provider": "firecrawl", "ok": False, "reason": "not_configured"})
 
         candidates = []
         seen_linkedin_urls = set()
         diagnostics = []
 
-        def _build_warm_paths(current_company: Optional[str], education: list[dict], full_name: str) -> list[WarmPath]:
+        # Quality threshold — below this, don't create a warm path
+        QUALITY_THRESHOLD = 0.35
+
+        def _build_warm_paths(
+            current_company: Optional[str],
+            current_title: Optional[str],
+            education: list[dict],
+            full_name: str,
+        ) -> list[WarmPath]:
             warm_paths = []
             if current_company:
                 contacts = network_index_service.find_company_contacts(network_index, current_company)
-                for contact in contacts[:1]:
-                    warm_paths.append(WarmPath(
-                        path_type="company_overlap",
-                        warmth_score=0.75,
-                        connector=contact,
-                        relationship=f"Both at {current_company}",
-                        suggested_message=f"Hey {contact.full_name.split()[0]}! I came across {full_name} who works with you. Would you be open to making an intro?"
-                    ))
+                if contacts:
+                    # Get company contact count
+                    normalized = network_index_service._normalize(current_company)
+                    company_idx = network_index.companies.get(normalized)
+                    contact_count = company_idx.count if company_idx else len(contacts)
+
+                    # Score all connectors and pick the best
+                    best_contact = None
+                    best_quality = -1.0
+                    best_signals = []
+
+                    for contact in contacts:
+                        # Check company match quality first
+                        match_qual = _score_company_match(contact.current_company, current_company)
+                        if match_qual < QUALITY_THRESHOLD:
+                            continue  # Skip false positive matches (e.g. StudyFetch vs Fetch)
+
+                        quality, signals = score_connector(
+                            connector=contact,
+                            candidate_title=current_title or "",
+                            company_contact_count=contact_count,
+                            candidate_company=current_company,
+                        )
+
+                        if quality > best_quality:
+                            best_quality = quality
+                            best_contact = contact
+                            best_signals = signals
+
+                    if best_contact and best_quality >= QUALITY_THRESHOLD:
+                        base_warmth = 0.75
+                        adjusted_warmth = base_warmth * best_quality
+
+                        warm_paths.append(WarmPath(
+                            path_type="company_overlap",
+                            warmth_score=adjusted_warmth,
+                            connector=best_contact,
+                            relationship=f"Both at {current_company}",
+                            suggested_message=f"Hey {best_contact.full_name.split()[0]}! I came across {full_name} who works with you. Would you be open to making an intro?",
+                            connector_quality=round(best_quality, 2),
+                            quality_signals=best_signals,
+                        ))
 
             for edu in education:
                 school = edu.get("school")
                 if school:
                     contacts = network_index_service.find_school_contacts(network_index, school)
-                    for contact in contacts[:1]:
+                    if contacts:
+                        # Pick the best connector by seniority
+                        best_contact = max(contacts, key=lambda c: _score_seniority(c.current_title))
+                        quality = _score_seniority(best_contact.current_title)
+                        signals = []
+                        if quality >= 0.9:
+                            signals.append(f"Senior connector ({best_contact.current_title or 'unknown'})")
+                        elif quality <= 0.3:
+                            signals.append(f"Junior connector ({best_contact.current_title or 'unknown'})")
+
+                        adjusted_warmth = 0.50 * quality
+
                         warm_paths.append(WarmPath(
                             path_type="school_overlap",
-                            warmth_score=0.50,
-                            connector=contact,
-                            relationship=f"Both attended {school}"
+                            warmth_score=adjusted_warmth,
+                            connector=best_contact,
+                            relationship=f"Both attended {school}",
+                            connector_quality=round(quality, 2),
+                            quality_signals=signals,
                         ))
             return warm_paths
 
@@ -439,6 +553,7 @@ class UnifiedSearchEngine:
 
             warm_paths = _build_warm_paths(
                 profile.current_company,
+                profile.current_title,
                 getattr(profile, 'education', []),
                 profile.full_name,
             )
@@ -469,15 +584,75 @@ class UnifiedSearchEngine:
                 intro_message=best_path.suggested_message if best_path else None
             ))
 
-        # Process all providers — Clado first (best match scores), then Firecrawl, then Apollo
+        # --- CACHE: collect all LinkedIn URLs from results for batch lookup ---
+        all_profiles_with_source = []
         for profile in clado_results.profiles:
-            _add_candidate(profile, "clado")
-
+            all_profiles_with_source.append((profile, "clado"))
         for profile in firecrawl_results.profiles:
-            _add_candidate(profile, "firecrawl")
-
+            all_profiles_with_source.append((profile, "firecrawl"))
         for profile in apollo_results.profiles:
-            _add_candidate(profile, "apollo")
+            all_profiles_with_source.append((profile, "apollo"))
+
+        cache_lookup_urls = [
+            p.linkedin_url.lower()
+            for p, _ in all_profiles_with_source
+            if p.linkedin_url
+        ]
+
+        cached_records = {}
+        if cache_lookup_urls:
+            try:
+                cached_records = await company_db.get_cached_external_candidates(
+                    cache_lookup_urls, max_age_days=7
+                )
+                if cached_records:
+                    print(f"   Cache: {len(cached_records)} hits, {len(cache_lookup_urls) - len(cached_records)} misses")
+            except Exception as e:
+                logger.warning("Cache lookup failed (non-fatal): %s", e)
+
+        # Process all providers — use cache when available, store new results
+        cache_store_tasks = []
+        for profile, source_provider in all_profiles_with_source:
+            linkedin_key = profile.linkedin_url.lower() if profile.linkedin_url else None
+            cached = cached_records.get(linkedin_key) if linkedin_key else None
+
+            if cached:
+                # Use cached enrichment data if available (richer than search result)
+                if cached.get("enrichment_source"):
+                    profile.skills = cached.get("skills") or getattr(profile, 'skills', [])
+                    profile.experience = cached.get("experience") or getattr(profile, 'experience', [])
+                    profile.education = cached.get("education") or getattr(profile, 'education', [])
+                    if cached.get("headline"):
+                        profile.headline = cached["headline"]
+                    if cached.get("location"):
+                        profile.location = cached["location"]
+
+            _add_candidate(profile, source_provider)
+
+            # Store new/updated results in cache (fire-and-forget)
+            if linkedin_key and not cached:
+                cache_store_tasks.append(
+                    company_db.upsert_external_candidate({
+                        "linkedin_url": profile.linkedin_url,
+                        "full_name": profile.full_name,
+                        "current_title": profile.current_title,
+                        "current_company": profile.current_company,
+                        "headline": profile.headline,
+                        "location": profile.location,
+                        "skills": getattr(profile, 'skills', []),
+                        "experience": getattr(profile, 'experience', []),
+                        "education": getattr(profile, 'education', []),
+                        "github_url": getattr(profile, 'github_url', None),
+                        "twitter_url": getattr(profile, 'twitter_url', None),
+                        "discovery_source": source_provider,
+                    })
+                )
+
+        # Store new candidates in cache (non-blocking)
+        if cache_store_tasks:
+            results = await asyncio.gather(*cache_store_tasks, return_exceptions=True)
+            stored = sum(1 for r in results if not isinstance(r, Exception))
+            print(f"   Cache: stored {stored} new candidates")
 
         provider_stats = {
             "clado_total_matches": clado_results.total_matches,
@@ -494,19 +669,22 @@ class UnifiedSearchEngine:
             "apollo": apollo_health,
         }
 
-        # Diagnostics
+        # Diagnostics — only warn about providers that ARE configured but failing
         active_providers = sum(1 for h in [clado_health, firecrawl_health, apollo_health] if h.get("ok"))
-        if len(candidates) == 0:
+        configured_providers = sum(1 for c in [clado_client, apollo_client, firecrawl_client] if c.enabled)
+
+        if len(candidates) == 0 and configured_providers > 0:
             diagnostics.append(
-                f"External search returned zero candidates across {active_providers} active providers. "
-                "Check provider credits, query quality, or provider limits."
+                f"External search returned zero candidates across {active_providers}/{configured_providers} "
+                "active providers. Check provider credits, query quality, or provider limits."
             )
-        if not clado_health.get("ok"):
-            diagnostics.append("Clado provider unhealthy or not configured.")
-        if not firecrawl_health.get("ok"):
-            diagnostics.append("Firecrawl provider unhealthy or not configured.")
-        if not apollo_health.get("ok"):
-            diagnostics.append("Apollo provider unhealthy or not configured.")
+        for name, health, client in [
+            ("Clado", clado_health, clado_client),
+            ("Firecrawl", firecrawl_health, firecrawl_client),
+            ("Apollo", apollo_health, apollo_client),
+        ]:
+            if client.enabled and not health.get("ok"):
+                diagnostics.append(f"{name} provider configured but unhealthy: {health.get('reason', 'unknown')}")
 
         meta = {
             "provider_stats": provider_stats,
@@ -567,6 +745,7 @@ class UnifiedSearchEngine:
         ])
 
         enriched_count = 0
+        cache_update_tasks = []
         for idx, profile in results:
             if profile is None:
                 continue
@@ -609,6 +788,29 @@ class UnifiedSearchEngine:
                 c.fit_score = new_fit
 
             c.confidence = 0.8  # Higher confidence after enrichment
+
+            # Update cache with enriched data
+            if c.linkedin_url:
+                cache_update_tasks.append(
+                    company_db.update_external_candidate_enrichment(
+                        linkedin_url=c.linkedin_url,
+                        enrichment_source="clado_profile",
+                        enrichment_data=profile.model_dump() if hasattr(profile, 'model_dump') else {},
+                        updated_fields={
+                            "skills": c.skills,
+                            "experience": c.experience,
+                            "education": c.education,
+                            "current_title": c.current_title,
+                            "current_company": c.current_company,
+                            "headline": c.headline,
+                            "location": c.location,
+                        },
+                    )
+                )
+
+        # Update cache with enrichment (non-blocking)
+        if cache_update_tasks:
+            await asyncio.gather(*cache_update_tasks, return_exceptions=True)
 
         print(f"   Enriched {enriched_count}/{len(enrichable)} candidates successfully")
         return candidates
@@ -687,28 +889,138 @@ class UnifiedSearchEngine:
         candidates: list[Candidate],
         role_title: str,
         required_skills: list[str],
-        top_n: int = 5
+        top_n: int = 3
     ) -> list[Candidate]:
-        """Run deep research on top N candidates."""
+        """
+        Run deep research on top N candidates.
+
+        Uses Claude Research Agent Team (preferred) or Perplexity (fallback).
+        Checks cache first — skips research for candidates researched in last 30 days.
+        """
+        # Try Claude Research Agent Team first
+        if settings.anthropic_web_search_enabled and settings.anthropic_api_key:
+            return await self._deep_research_claude(candidates, role_title, required_skills, top_n)
+
+        # Fallback to Perplexity
+        return await self._deep_research_perplexity(candidates, role_title, required_skills, top_n)
+
+    async def _deep_research_claude(
+        self,
+        candidates: list[Candidate],
+        role_title: str,
+        required_skills: list[str],
+        top_n: int = 3
+    ) -> list[Candidate]:
+        """Deep research using Claude Research Agent Team with caching."""
+        from app.services.research.research_agent_team import ResearchOrchestrator
+
+        try:
+            orchestrator = ResearchOrchestrator(max_concurrent=3)
+
+            # Check cache for already-researched candidates (30-day window)
+            to_research = []
+            cached_indices = {}
+            for i, candidate in enumerate(candidates[:top_n]):
+                if candidate.linkedin_url:
+                    try:
+                        cached = await company_db.get_cached_candidate_by_url(
+                            candidate.linkedin_url, max_age_days=30
+                        )
+                        if cached and cached.get("research_data"):
+                            # Use cached research
+                            cached_indices[i] = cached
+                            print(f"   Cache hit (research): {candidate.full_name}")
+                            continue
+                    except Exception:
+                        pass
+                to_research.append((i, candidate))
+
+            # Research uncached candidates
+            if to_research:
+                print(f"   Researching {len(to_research)} candidates via Claude Agent Team...")
+                candidate_dicts = [
+                    {
+                        "full_name": c.full_name,
+                        "current_title": c.current_title,
+                        "current_company": c.current_company,
+                        "linkedin_url": c.linkedin_url,
+                        "location": c.location,
+                    }
+                    for _, c in to_research
+                ]
+
+                results = await orchestrator.research_candidates(
+                    candidate_dicts, role_title, required_skills, top_n=len(candidate_dicts)
+                )
+
+                for (idx, candidate), result in zip(to_research, results):
+                    result_dict = result.model_dump()
+                    candidate.deep_research = result_dict
+
+                    # Extract highlights from findings
+                    for finding in result.findings:
+                        if finding.verified and finding.confidence >= 0.7:
+                            candidate.research_highlights.append(
+                                f"🔬 {finding.category.title()}: {finding.title}"
+                            )
+
+                    if result.identity_confidence >= 0.7:
+                        candidate.confidence = max(candidate.confidence, result.identity_confidence)
+
+                    # Store in cache
+                    if candidate.linkedin_url:
+                        try:
+                            await company_db.update_external_candidate_research(
+                                linkedin_url=candidate.linkedin_url,
+                                research_data=result_dict,
+                                research_confidence=result.identity_confidence,
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to cache research for %s: %s", candidate.full_name, e)
+
+            # Apply cached research
+            for idx, cached in cached_indices.items():
+                candidate = candidates[idx]
+                candidate.deep_research = cached["research_data"]
+                candidate.confidence = max(candidate.confidence, cached.get("research_confidence", 0.5))
+
+                # Re-extract highlights from cached findings
+                for finding in cached["research_data"].get("findings", []):
+                    if finding.get("verified") and finding.get("confidence", 0) >= 0.7:
+                        candidate.research_highlights.append(
+                            f"🔬 {finding.get('category', 'unknown').title()}: {finding.get('title', '')}"
+                        )
+
+        except Exception as e:
+            print(f"   Claude research error: {e}")
+            logger.exception("Claude research agent team failed")
+
+        return candidates
+
+    async def _deep_research_perplexity(
+        self,
+        candidates: list[Candidate],
+        role_title: str,
+        required_skills: list[str],
+        top_n: int = 3
+    ) -> list[Candidate]:
+        """Fallback deep research using Perplexity."""
         try:
             from app.services.research.perplexity_researcher import DeepResearchEngine
 
             engine = DeepResearchEngine(settings.perplexity_api_key)
 
             for i, candidate in enumerate(candidates[:top_n]):
-                print(f"   Researching {i+1}/{top_n}: {candidate.full_name}...")
+                print(f"   Researching {i+1}/{top_n}: {candidate.full_name} (Perplexity)...")
 
-                # Build simple research object
                 class SimpleCandidate:
                     def __init__(self, c):
                         self.full_name = c.full_name
                         self.current_title = c.current_title
                         self.current_company = c.current_company
                         self.linkedin_url = c.linkedin_url
-                        # Perplexity query builder expects location for identity disambiguation.
                         self.location = c.location
 
-                # Research using Perplexity
                 insights = await engine.researcher.research_candidate(
                     SimpleCandidate(candidate),
                     role_title,
@@ -717,7 +1029,6 @@ class UnifiedSearchEngine:
 
                 candidate.deep_research = insights
 
-                # Extract highlights
                 raw = insights.get("raw_research", "")
                 if "github" in raw.lower():
                     candidate.research_highlights.append("🔬 GitHub profile found")
@@ -725,7 +1036,7 @@ class UnifiedSearchEngine:
                     candidate.research_highlights.append("🔬 Relevant skills confirmed")
 
         except Exception as e:
-            print(f"   Research error: {e}")
+            print(f"   Perplexity research error: {e}")
 
         return candidates
 
@@ -746,7 +1057,18 @@ class UnifiedSearchEngine:
                 why.append("✓ Direct connection in your network")
 
             if c.warm_path:
-                why.append(f"🤝 Warm path: {c.warm_path.relationship}")
+                connector = c.warm_path.connector
+                connector_info = connector.full_name
+                if connector.current_title and connector.current_company:
+                    connector_info += f" ({connector.current_title} @ {connector.current_company})"
+                elif connector.current_company:
+                    connector_info += f" @ {connector.current_company}"
+                quality_pct = f" | Quality: {c.warm_path.connector_quality:.2f}" if c.warm_path.connector_quality else ""
+                why.append(f"🤝 Warm intro via {connector_info}: {c.warm_path.relationship}{quality_pct}")
+                if c.warm_path.quality_signals:
+                    why.append(f"   Signals: {', '.join(c.warm_path.quality_signals)}")
+                if connector.linkedin_url:
+                    why.append(f"🔗 Connector LinkedIn: {connector.linkedin_url}")
 
             if c.fit_score >= 80:
                 why.append(f"💪 Strong fit ({c.fit_score:.0f}% match)")

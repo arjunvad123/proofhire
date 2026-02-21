@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # Anthropic (Claude - Reasoning Layer)
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"  # Latest Claude model
+    anthropic_web_search_enabled: bool = True  # Use Claude web_search for deep research
 
     # Google Custom Search Engine
     google_cse_api_key: str = ""

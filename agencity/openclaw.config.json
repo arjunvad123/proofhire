@@ -31,7 +31,7 @@
     "enabled": true,
     "load": {
       "paths": [
-        "/Users/arjunvad/openclaw-fork/extensions/agencity"
+        "../../extensions/agencity"
       ]
     },
     "allow": ["agencity"],

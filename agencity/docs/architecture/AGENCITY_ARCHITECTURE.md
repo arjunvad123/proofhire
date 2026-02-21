@@ -6,7 +6,7 @@ Agencity documents detail an AI hiring agent using RL-trained reasoning and Proo
 
 ## Complete Technical Documentation with Confido Example
 
-**Version 2.2** | Last Updated: February 12, 2026 | Status: ✅ Hybrid Search + Warm Path Intelligence Built
+**Version 3.2** | Last Updated: February 16, 2026 | Status: ✅ Production Optimizations & Demo Setup
 
 ---
 

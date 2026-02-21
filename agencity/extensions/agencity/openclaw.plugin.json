@@ -1,0 +1,29 @@
+{
+  "id": "agencity",
+  "name": "Agencity",
+  "description": "AI hiring agent tools — candidate search, curation, pipeline management, and network intelligence.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiBase": {
+        "type": "string",
+        "description": "Base URL of the Agencity Python API",
+        "default": "http://localhost:8001"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "API key for authenticating with the Agencity backend"
+      },
+      "defaultMode": {
+        "type": "string",
+        "enum": ["quick", "full", "network_only"],
+        "default": "quick"
+      },
+      "timeoutMs": {
+        "type": "number",
+        "default": 60000
+      }
+    }
+  }
+}

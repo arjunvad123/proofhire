@@ -17,11 +17,20 @@ set -euo pipefail
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENCITY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OPENCLAW_ROOT="$(cd "$AGENCITY_ROOT/../../openclaw-fork" 2>/dev/null && pwd || echo "")"
 
-# Fall back to user home if openclaw-fork isn't relative
-if [ -z "$OPENCLAW_ROOT" ] || [ ! -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
-  OPENCLAW_ROOT="$HOME/openclaw-fork"
+# OpenClaw resolution order:
+#   1. OPENCLAW_ROOT env var (explicit override)
+#   2. vendor/openclaw/ (embedded — recommended)
+#   3. ../../openclaw-fork (sibling directory — legacy)
+#   4. ~/openclaw-fork (home directory — legacy fallback)
+if [ -n "${OPENCLAW_ROOT:-}" ] && [ -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
+  : # Use explicit OPENCLAW_ROOT
+elif [ -f "$AGENCITY_ROOT/vendor/openclaw/openclaw.mjs" ]; then
+  OPENCLAW_ROOT="$AGENCITY_ROOT/vendor/openclaw"
+elif [ -f "$AGENCITY_ROOT/../../openclaw-fork/openclaw.mjs" ]; then
+  OPENCLAW_ROOT="$(cd "$AGENCITY_ROOT/../../openclaw-fork" && pwd)"
+else
+  OPENCLAW_ROOT="${OPENCLAW_ROOT:-$HOME/openclaw-fork}"
 fi
 
 PIDFILE_API="$AGENCITY_ROOT/.agencity-api.pid"
@@ -108,7 +117,7 @@ cmd_start() {
   else
     if [ ! -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
       err "OpenClaw not found at $OPENCLAW_ROOT"
-      err "Set OPENCLAW_ROOT or ensure openclaw-fork is at ~/openclaw-fork"
+      err "Run: ./scripts/setup-openclaw.sh"
       return 1
     fi
 
@@ -195,6 +204,7 @@ cmd_chat() {
 
   if [ ! -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
     err "OpenClaw not found at $OPENCLAW_ROOT"
+    err "Run: ./scripts/setup-openclaw.sh"
     return 1
   fi
 
@@ -218,7 +228,7 @@ cmd_search() {
   fi
 
   if [ ! -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
-    err "OpenClaw not found"
+    err "OpenClaw not found. Run: ./scripts/setup-openclaw.sh"
     return 1
   fi
 
@@ -255,9 +265,10 @@ cmd_doctor() {
 
   # Check OpenClaw
   if [ -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
-    ok "OpenClaw:   found at $OPENCLAW_ROOT"
+    OPENCLAW_VERSION=$(cat "$AGENCITY_ROOT/.openclaw-version" 2>/dev/null || echo "unknown")
+    ok "OpenClaw:   found at $OPENCLAW_ROOT (version: $OPENCLAW_VERSION)"
   else
-    err "OpenClaw:   not found"
+    err "OpenClaw:   not found — run ./scripts/setup-openclaw.sh"
   fi
 
   # Check Agencity root
@@ -328,6 +339,7 @@ cmd_gateway_start() {
 
   if [ ! -f "$OPENCLAW_ROOT/openclaw.mjs" ]; then
     err "OpenClaw not found at $OPENCLAW_ROOT"
+    err "Run: ./scripts/setup-openclaw.sh"
     return 1
   fi
 
@@ -375,7 +387,7 @@ cmd_help() {
   echo -e "  AGENCITY_API_BASE     API URL (default: http://localhost:8001)"
   echo -e "  AGENCITY_API_PORT     API port (default: 8001)"
   echo -e "  AGENCITY_COMPANY_ID   Default company UUID"
-  echo -e "  OPENCLAW_ROOT         Path to OpenClaw (default: ~/openclaw-fork)"
+  echo -e "  OPENCLAW_ROOT         Path to OpenClaw (default: vendor/openclaw)"
   echo ""
 }
 

@@ -6,9 +6,301 @@ This is the key differentiator: Clado gives you WHO, we give you HOW TO REACH TH
 """
 
 from typing import Optional
+from datetime import datetime
 from pydantic import BaseModel
 from app.services.network_index import NetworkIndex, NetworkContact, network_index_service
 from app.services.external_search.clado_client import CladoProfile
+
+
+# =============================================================================
+# TEMPORAL OVERLAP CHECKING
+# =============================================================================
+
+def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
+    """Parse YYYY or YYYY-MM format into datetime. Returns None if unparseable."""
+    if not date_str:
+        return None
+    try:
+        if len(date_str) == 4:  # "2023"
+            return datetime(int(date_str), 1, 1)
+        elif len(date_str) == 7:  # "2023-06"
+            parts = date_str.split("-")
+            return datetime(int(parts[0]), int(parts[1]), 1)
+        elif len(date_str) >= 10:  # "2023-06-15" or longer
+            parts = date_str.split("-")
+            return datetime(int(parts[0]), int(parts[1]), int(parts[2][:2]))
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _check_temporal_overlap(
+    exp1_start: Optional[str],
+    exp1_end: Optional[str],
+    exp2_start: Optional[str],
+    exp2_end: Optional[str],
+    min_overlap_months: int = 3
+) -> tuple[bool, int]:
+    """
+    Check if two experience periods overlap by at least min_overlap_months.
+
+    Args:
+        exp1_start, exp1_end: Start/end dates for first experience
+        exp2_start, exp2_end: Start/end dates for second experience
+        min_overlap_months: Minimum overlap required (default 3 months)
+
+    Returns:
+        (has_overlap, overlap_months) - whether overlap exists and how many months
+    """
+    start1 = _parse_date(exp1_start)
+    end1 = _parse_date(exp1_end) or datetime.now()  # No end = still there
+    start2 = _parse_date(exp2_start)
+    end2 = _parse_date(exp2_end) or datetime.now()
+
+    # If we can't parse dates, assume no verifiable overlap
+    if not start1 or not start2:
+        return False, 0
+
+    # Calculate overlap
+    overlap_start = max(start1, start2)
+    overlap_end = min(end1, end2)
+
+    if overlap_start >= overlap_end:
+        return False, 0
+
+    # Calculate overlap in months
+    overlap_days = (overlap_end - overlap_start).days
+    overlap_months = overlap_days // 30
+
+    return overlap_months >= min_overlap_months, overlap_months
+
+
+def _find_connector_experience_at_company(
+    connector: NetworkContact,
+    target_company: str,
+) -> Optional[dict]:
+    """
+    Find connector's experience entry for a specific company.
+
+    Returns the experience dict if found, None otherwise.
+    """
+    normalized_target = network_index_service._normalize(target_company)
+
+    for exp in connector.experience:
+        exp_company = exp.get("company", "")
+        if not exp_company:
+            continue
+
+        normalized_exp = network_index_service._normalize(exp_company)
+
+        # Check if same company (exact or fuzzy match)
+        if normalized_exp == normalized_target or \
+           normalized_exp in normalized_target or \
+           normalized_target in normalized_exp:
+            return exp
+
+    return None
+
+
+# =============================================================================
+# CONNECTOR QUALITY SCORING
+# =============================================================================
+
+# Seniority level keywords → score
+_SENIORITY_LEVELS = [
+    (1.0, {"director", "vp", "vice president", "head", "principal", "cto", "ceo",
+            "coo", "cfo", "founder", "co-founder", "cofounder", "partner", "evp",
+            "svp", "chief"}),
+    (0.9, {"senior", "staff", "lead", "sr", "manager"}),
+    (0.7, set()),  # default / mid-level (no keyword match)
+    (0.5, {"junior", "associate", "entry", "assistant", "jr"}),
+    (0.3, {"intern", "student", "ambassador", "fellow", "apprentice", "trainee",
+            "volunteer", "extern"}),
+]
+
+# Role function keyword groups
+_ROLE_FUNCTIONS = {
+    "engineering": {"engineer", "developer", "swe", "sde", "programmer", "software",
+                    "backend", "frontend", "fullstack", "full-stack", "devops", "sre",
+                    "infrastructure", "platform", "mobile", "ios", "android", "web"},
+    "data": {"data", "analyst", "analytics", "scientist", "ml", "machine learning",
+             "ai", "deep learning", "nlp", "computer vision"},
+    "product": {"product", "pm", "program manager", "product manager", "tpm"},
+    "design": {"design", "designer", "ux", "ui", "creative", "graphic"},
+    "marketing": {"marketing", "growth", "brand", "content", "seo", "sem"},
+    "sales": {"sales", "account", "bd", "business development", "revenue"},
+    "ops": {"operations", "ops", "supply chain", "logistics", "procurement"},
+    "hr": {"hr", "human resources", "people", "talent", "recruiter", "recruiting"},
+    "finance": {"finance", "accounting", "controller", "treasury", "fp&a"},
+}
+
+# Adjacent function pairs (bidirectional)
+_ADJACENT_FUNCTIONS = {
+    frozenset({"engineering", "data"}),
+    frozenset({"engineering", "product"}),
+    frozenset({"product", "design"}),
+    frozenset({"marketing", "sales"}),
+    frozenset({"data", "product"}),
+    frozenset({"ops", "finance"}),
+}
+
+
+def _score_seniority(title: str) -> float:
+    """Score connector seniority from title keywords. Returns 0.0-1.0."""
+    if not title:
+        return 0.7  # Unknown = mid-level assumption
+    title_lower = title.lower()
+    # Check from highest to lowest — first match wins
+    for score, keywords in _SENIORITY_LEVELS:
+        if keywords and any(kw in title_lower for kw in keywords):
+            return score
+    return 0.7  # Mid-level default
+
+
+def _score_company_size(contact_count: int) -> float:
+    """Score based on how many network contacts are at the target company. Returns 0.0-1.0."""
+    if contact_count <= 2:
+        return 1.0
+    elif contact_count <= 5:
+        return 0.8
+    elif contact_count <= 15:
+        return 0.6
+    elif contact_count <= 50:
+        return 0.4
+    else:
+        return 0.25
+
+
+def _get_role_function(title: str) -> Optional[str]:
+    """Extract the role function from a title string."""
+    if not title:
+        return None
+    title_lower = title.lower()
+    for function_name, keywords in _ROLE_FUNCTIONS.items():
+        if any(kw in title_lower for kw in keywords):
+            return function_name
+    return None
+
+
+def _score_role_relevance(connector_title: str, candidate_title: str) -> float:
+    """Score how relevant the connector's role is to the candidate's. Returns 0.0-1.0."""
+    func_a = _get_role_function(connector_title)
+    func_b = _get_role_function(candidate_title)
+
+    if func_a is None or func_b is None:
+        return 0.5  # Can't determine — neutral
+
+    if func_a == func_b:
+        return 1.0
+
+    if frozenset({func_a, func_b}) in _ADJACENT_FUNCTIONS:
+        return 0.7
+
+    return 0.4
+
+
+def _score_company_match(company_a: str, company_b: str) -> float:
+    """Score how well two company names actually match. Returns 0.0-1.0."""
+    if not company_a or not company_b:
+        return 0.0
+
+    norm_a = network_index_service._normalize(company_a)
+    norm_b = network_index_service._normalize(company_b)
+
+    if norm_a == norm_b:
+        return 1.0
+
+    # Substring match — check length ratio to catch StudyFetch vs Fetch
+    if norm_a in norm_b or norm_b in norm_a:
+        shorter = min(len(norm_a), len(norm_b))
+        longer = max(len(norm_a), len(norm_b))
+        ratio = shorter / longer if longer > 0 else 0
+        if ratio >= 0.7:
+            return 0.7  # Close lengths — likely same company (e.g. "Microsoft" vs "Microsoft Corp")
+        else:
+            return 0.2  # Very different lengths — likely false positive (StudyFetch vs Fetch)
+
+    return 0.0  # No match at all
+
+
+def score_connector(
+    connector: NetworkContact,
+    candidate_title: str,
+    company_contact_count: int,
+    candidate_company: str,
+) -> tuple[float, list[str]]:
+    """
+    Score a connector's quality for making an intro.
+
+    Returns:
+        (quality_score, human_readable_signals)
+        quality_score is 0.0-1.0
+    """
+    seniority = _score_seniority(connector.current_title)
+    company_size = _score_company_size(company_contact_count)
+    role_rel = _score_role_relevance(connector.current_title, candidate_title)
+    match_qual = _score_company_match(connector.current_company, candidate_company)
+
+    quality = (
+        seniority * 0.25 +
+        company_size * 0.30 +
+        role_rel * 0.20 +
+        match_qual * 0.25
+    )
+
+    # Build human-readable signals
+    signals = []
+
+    # Seniority signal
+    seniority_label = "Unknown level"
+    if seniority >= 1.0:
+        seniority_label = "Senior leader"
+    elif seniority >= 0.9:
+        seniority_label = "Senior"
+    elif seniority >= 0.7:
+        seniority_label = "Mid-level"
+    elif seniority >= 0.5:
+        seniority_label = "Junior"
+    else:
+        seniority_label = "Intern/student"
+    connector_role = connector.current_title or "unknown role"
+    signals.append(f"{seniority_label} ({connector_role})")
+
+    # Network density signal — how many of YOUR contacts are at this company
+    if company_contact_count > 15:
+        signals.append(f"{company_contact_count} contacts in network (diluted)")
+    elif company_contact_count > 5:
+        signals.append(f"{company_contact_count} contacts in network")
+    else:
+        signals.append(f"{company_contact_count} contact{'s' if company_contact_count != 1 else ''} in network (strong signal)")
+
+    # Role relevance signal
+    if role_rel >= 1.0:
+        signals.append("Same function")
+    elif role_rel >= 0.7:
+        signals.append("Adjacent function")
+    elif role_rel <= 0.4:
+        signals.append("Different function")
+
+    # Company match signal
+    if match_qual < 1.0 and match_qual > 0.0:
+        if match_qual <= 0.2:
+            signals.append(f"Weak company match ({connector.current_company} vs {candidate_company})")
+        else:
+            signals.append("Partial company match")
+
+    return quality, signals
+
+
+class ScoredConnector(BaseModel):
+    """A connector with quality scoring and temporal overlap info."""
+
+    connector: NetworkContact
+    quality_score: float  # 0-1, quality of this connector
+    quality_signals: list[str] = []  # Human-readable quality signals
+    has_temporal_overlap: bool = False  # Did they actually overlap in time?
+    overlap_months: int = 0  # How many months they overlapped
+    suggested_message: Optional[str] = None  # Personalized intro message
 
 
 class WarmPath(BaseModel):
@@ -16,9 +308,15 @@ class WarmPath(BaseModel):
 
     path_type: str  # "company_overlap", "school_overlap", "skill_overlap", "direct"
     warmth_score: float  # 0-1, higher = warmer intro
-    connector: NetworkContact  # The person who can make the intro
+    connector: NetworkContact  # Best connector (for backwards compatibility)
     relationship: str  # Human readable: "Both worked at Stripe"
     suggested_message: Optional[str] = None  # Intro request template
+    connector_quality: float = 0.0  # 0-1, quality of the connector for this intro
+    quality_signals: list[str] = []  # Human-readable quality signals
+
+    # Multiple connectors support
+    all_connectors: list[ScoredConnector] = []  # All viable connectors, ranked by quality
+    total_connectors: int = 0  # Total count of connectors for this path
 
 
 class CandidateWithWarmth(BaseModel):
@@ -133,48 +431,81 @@ class WarmPathFinder:
         candidate: CladoProfile,
         index: NetworkIndex
     ) -> list[WarmPath]:
-        """Find network contacts who worked at same companies."""
+        """Find network contacts who worked at same companies, scored by quality."""
         paths = []
+
+        def _score_and_pick_best(contacts, candidate_company, is_current_company):
+            """Score all contacts for a company match, return the best one as a WarmPath or None."""
+            if not contacts:
+                return None
+
+            # Get company contact count for size scoring
+            normalized_company = network_index_service._normalize(candidate_company)
+            company_index = index.companies.get(normalized_company)
+            contact_count = company_index.count if company_index else len(contacts)
+
+            # Score all contacts and pick the best
+            best_contact = None
+            best_quality = -1.0
+            best_signals = []
+
+            for contact in contacts:
+                quality, signals = score_connector(
+                    connector=contact,
+                    candidate_title=candidate.current_title or "",
+                    company_contact_count=contact_count,
+                    candidate_company=candidate_company,
+                )
+
+                # Also check company match quality
+                match_qual = _score_company_match(contact.current_company, candidate_company)
+                if match_qual < 0.35 and is_current_company:
+                    continue  # Skip false positive company matches
+
+                if quality > best_quality:
+                    best_quality = quality
+                    best_contact = contact
+                    best_signals = signals
+
+            if best_contact is None:
+                return None
+
+            is_current = (
+                best_contact.current_company and
+                self._companies_match(best_contact.current_company, candidate_company)
+            )
+            base_warmth = self.WARMTH_COMPANY_CURRENT if (is_current and is_current_company) else self.WARMTH_COMPANY_PAST
+            adjusted_warmth = base_warmth * best_quality
+
+            return WarmPath(
+                path_type="company_overlap",
+                warmth_score=adjusted_warmth,
+                connector=best_contact,
+                relationship=f"{'Currently work together' if is_current else 'Both worked'} at {candidate_company}",
+                suggested_message=self._generate_company_intro_message(
+                    best_contact, candidate, candidate_company, is_current
+                ),
+                connector_quality=round(best_quality, 2),
+                quality_signals=best_signals,
+            )
 
         # Check current company
         if candidate.current_company:
             contacts = network_index_service.find_company_contacts(
                 index, candidate.current_company
             )
-            for contact in contacts[:3]:  # Limit to top 3
-                # Determine if contact is currently at this company
-                is_current = (
-                    contact.current_company and
-                    self._companies_match(contact.current_company, candidate.current_company)
-                )
-
-                warmth = self.WARMTH_COMPANY_CURRENT if is_current else self.WARMTH_COMPANY_PAST
-
-                paths.append(WarmPath(
-                    path_type="company_overlap",
-                    warmth_score=warmth,
-                    connector=contact,
-                    relationship=f"{'Currently work together' if is_current else 'Both worked'} at {candidate.current_company}",
-                    suggested_message=self._generate_company_intro_message(
-                        contact, candidate, candidate.current_company, is_current
-                    )
-                ))
+            path = _score_and_pick_best(contacts, candidate.current_company, is_current_company=True)
+            if path:
+                paths.append(path)
 
         # Check past companies
         for exp in candidate.experience:
             company = exp.get("company")
             if company and company != candidate.current_company:
                 contacts = network_index_service.find_company_contacts(index, company)
-                for contact in contacts[:2]:
-                    paths.append(WarmPath(
-                        path_type="company_overlap",
-                        warmth_score=self.WARMTH_COMPANY_PAST,
-                        connector=contact,
-                        relationship=f"Both worked at {company}",
-                        suggested_message=self._generate_company_intro_message(
-                            contact, candidate, company, False
-                        )
-                    ))
+                path = _score_and_pick_best(contacts, company, is_current_company=False)
+                if path:
+                    paths.append(path)
 
         return paths
 
@@ -183,23 +514,39 @@ class WarmPathFinder:
         candidate: CladoProfile,
         index: NetworkIndex
     ) -> list[WarmPath]:
-        """Find network contacts who went to same schools."""
+        """Find network contacts who went to same schools, scored by seniority."""
         paths = []
 
         for edu in candidate.education:
             school = edu.get("school")
             if school:
                 contacts = network_index_service.find_school_contacts(index, school)
-                for contact in contacts[:2]:
-                    paths.append(WarmPath(
-                        path_type="school_overlap",
-                        warmth_score=self.WARMTH_SCHOOL,
-                        connector=contact,
-                        relationship=f"Both attended {school}",
-                        suggested_message=self._generate_school_intro_message(
-                            contact, candidate, school
-                        )
-                    ))
+                if not contacts:
+                    continue
+
+                # Pick the best connector by seniority
+                best_contact = max(contacts, key=lambda c: _score_seniority(c.current_title))
+                seniority = _score_seniority(best_contact.current_title)
+                quality = seniority  # For school overlaps, quality = seniority
+                signals = []
+                if seniority >= 0.9:
+                    signals.append(f"Senior connector ({best_contact.current_title or 'unknown'})")
+                elif seniority <= 0.3:
+                    signals.append(f"Junior connector ({best_contact.current_title or 'unknown'})")
+
+                adjusted_warmth = self.WARMTH_SCHOOL * quality
+
+                paths.append(WarmPath(
+                    path_type="school_overlap",
+                    warmth_score=adjusted_warmth,
+                    connector=best_contact,
+                    relationship=f"Both attended {school}",
+                    suggested_message=self._generate_school_intro_message(
+                        best_contact, candidate, school
+                    ),
+                    connector_quality=round(quality, 2),
+                    quality_signals=signals,
+                ))
 
         return paths
 

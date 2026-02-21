@@ -53,7 +53,7 @@ This document describes the unified architecture that combines:
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │ │
 │  │  │  Network    │  │  External   │  │   Warm      │  │   Deep      │   │ │
 │  │  │  Index      │  │   APIs      │  │   Paths     │  │  Research   │   │ │
-│  │  │ (Supabase)  │  │ (Clado/PDL) │  │  (Finder)   │  │ (Perplexity)│   │ │
+│  │  │ (Supabase)  │  │ (Clado/PDL) │  │  (Finder)   │  │(Claude+Web) │   │ │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                    │                                         │
@@ -122,17 +122,21 @@ Four independent intelligence modules that feed signals into search:
 - **Key Classes**: `CompanyEventMonitor`, `LayoffTracker`, `AlertGenerator`
 - **Output**: Alerts when network members may be ready to move
 
-### 3. Reasoning Layer (Kimi K2.5)
+### 3. Reasoning Layer (Claude)
 
-New AI reasoning capabilities using Kimi K2.5:
+AI reasoning capabilities using Anthropic Claude:
 
 ```
 app/services/reasoning/
-├── kimi_engine.py          # Main Kimi K2.5 wrapper
+├── claude_engine.py        # Main Claude wrapper (Agent Swarm pattern)
 ├── query_reasoner.py       # Generate smart search queries
 ├── candidate_analyzer.py   # Deep analysis of candidates
 ├── ranking_reasoner.py     # Explain ranking decisions
 └── agent_swarm.py          # Coordinate parallel analysis
+
+app/services/research/
+├── research_agent_team.py  # Claude web_search research pipeline (NEW)
+└── perplexity_researcher.py # Perplexity fallback (legacy)
 ```
 
 #### Capabilities:
@@ -140,6 +144,7 @@ app/services/reasoning/
 2. **Candidate Analysis**: Multi-agent analysis (skills, trajectory, fit, timing)
 3. **Ranking Reasoning**: Explain why candidates are ranked
 4. **Context Building**: Generate rich "why consider" narratives
+5. **Deep Research** (NEW): Claude Research Agent Team with web_search tool
 
 ### 4. Feedback & Learning Layer
 
@@ -209,8 +214,9 @@ app/services/rl/
    │   ├─→ Fit Score (50%) + Warmth (30%) + Timing (20%)
    │   └─→ Reward Model: Adjust based on learned preferences
    │
-   ├─→ Deep Research (top 5)
-   │   └─→ Perplexity: GitHub, articles, projects
+   ├─→ Deep Research (top 3)
+   │   ├─→ Cache check: skip if researched within 30 days
+   │   └─→ Claude Research Agent Team: web_search → validate → cite
    │
    └─→ Context Building
        └─→ "Why consider" + "Unknowns" for each
@@ -244,6 +250,151 @@ Feedback Collector
       └─→ Deploy updated model
           └─→ Future rankings use improved model
 ```
+
+### Complete Search Pipeline
+
+The following section provides a detailed, step-by-step breakdown of how the search pipeline executes in production:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     AGENCITY SEARCH PIPELINE                        │
+│                                                                     │
+│  API Request → Auth → Unified Search Engine → Scored Results        │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Step 1: Network Index
+
+- Pulls all contacts from Supabase (founder's network, typically 3,000-4,000 contacts)
+- Indexes by company, school, skills
+- Builds warm path lookup tables for fast connection discovery
+
+#### Step 2: Network Search (Tier 1)
+
+- Scans all contacts for role/skill match
+- Scores each person's fit (title + skills matching)
+- Everyone here gets `warmth_score = 100` (direct connection)
+- Typically finds: ~23-26 candidates from direct network
+
+#### Step 3: External Search (Tier 2-3) — All in Parallel
+
+All external searches execute in parallel using `asyncio.gather()`:
+
+**GPT-4o-mini Query Generator**
+- Takes: `role_title` + `skills` + network companies/schools
+- Generates: 1 primary query + 2 expansion queries
+- Smart context: "founding engineer at companies similar to {your network}"
+
+**Firecrawl (3 parallel queries)**
+- Primary: `"site:linkedin.com/in founding engineer react typescript python"`
+- Expansion 1: (broader role terms)
+- Expansion 2: (network-adjacent companies)
+- Returns: ~30-33 LinkedIn profiles from web search
+
+**Clado Search**
+- Natural language people search
+- Currently returning 0 results (support ticket open)
+- Would provide additional external candidates if working
+
+**Apollo Search**
+- Structured people search with filters
+- Currently returns 403 (needs paid plan $49/mo)
+- Would provide additional structured candidate data if enabled
+
+**Result Processing**
+- Deduplicates by LinkedIn URL
+- Typically yields: ~31 unique external candidates
+
+#### Step 3.5: Clado Enrichment (NEW)
+
+- Takes top 10 external candidates (by `fit_score`)
+- For each LinkedIn URL:
+  - Try `get_profile()` — cached data ($0.01/credit)
+  - If cache miss → `scrape_profile()` — real-time scrape ($0.02)
+- Fills in: `skills[]`, `experience[]`, `education[]`, `location`
+- Recalculates `fit_score` with enriched data
+- Sets `confidence = 0.8` (vs `0.5` for un-enriched)
+
+#### Step 3 → Warm Path Finder
+
+- For each external candidate's company → checks network
+  - "Does anyone in the contacts work at this company?"
+- For each school → checks alumni in network
+- Assigns `warmth_score`:
+  - `75` = company overlap
+  - `50` = school overlap
+- Tier 2 (warm) if path found, Tier 3 (cold) if not
+
+#### Step 4: Timing Signals
+
+- Checks `current_company` against layoff database
+- Analyzes tenure length (long = more likely to move)
+- Sets `timing_urgency`: "high" / "medium" / "low"
+- Calculates `timing_score`: 0-100
+
+#### Step 5: Final Scoring
+
+```python
+combined_score = fit_score × 0.50 + warmth_score × 0.30 + timing_score × 0.20
+```
+
+- Sort all candidates by `combined_score` DESC
+- Network candidates naturally rank high (`warmth_score = 100`)
+
+#### Step 6: Deep Research (Claude Research Agent Team)
+
+- Top 3 candidates get researched via Claude web_search tool (preferred) or Perplexity (fallback)
+- **Claude Research Agent Team** (3-agent pipeline):
+  - **Scoped Search Agent** (Sonnet + `web_search`, `allowed_domains`: github.com, medium.com, dev.to, etc., `max_uses: 5`)
+  - **General Search Agent** (Sonnet + `web_search`, no domain filter, `max_uses: 3`)
+  - **Validation Agent** (Haiku, no web search — validates findings against anchor identity)
+- Uses **Anchor-and-Verify pattern**: LinkedIn URL + company + location form the identity anchor; every finding validated against it
+- Results cached in `external_candidates.research_data` — skips re-research within 30 days
+- Finds: GitHub repos, blog posts, talks, news mentions — with verified citations
+- Adds `research_highlights` to candidate object
+- Cost per candidate: ~$0.08-0.12 (vs Perplexity $0.005-0.01 that returned nothing useful)
+
+#### Step 7: Context Building
+
+- Generates `why_consider` bullets
+- Identifies `unknowns`
+- Sets `confidence` levels
+
+**Final Output**: Returns top 15 candidates with full intelligence
+
+---
+
+### Provider Status Summary
+
+| Provider | Status | What It Does | Cost |
+|----------|--------|--------------|------|
+| Firecrawl | Working (50k credits) | Web search → LinkedIn profiles | ~1 credit/result |
+| Clado Enrichment | Working (1,088 credits) | Full profile data for LinkedIn URLs | 1-3 credits/profile |
+| Clado Search | Auth OK, 0 results | Natural language people search | — |
+| Apollo | Needs paid plan ($49/mo) | Structured people search + filters | — |
+| Claude Web Search | **Primary** | Deep research on top 3 candidates | ~$0.08-0.12/candidate |
+| Perplexity | Fallback (broken) | Deep research fallback | ~$0.005-0.01/call |
+| GPT-4o-mini | Working | Query generation + expansion | — |
+
+### External Candidate Cache
+
+External search results are cached in the `external_candidates` Supabase table:
+- **Search cache**: 7-day TTL — avoids re-hitting Firecrawl/Clado for the same people
+- **Research cache**: 30-day TTL — never re-research the same person within 30 days
+- Cache key: `linkedin_url` (unique constraint)
+- Enrichment data (skills, experience, education) persisted after Clado waterfall
+
+### Example Run Summary
+
+**What Happened in a Typical Run:**
+
+1. **Firecrawl** found 31 people from 3 parallel LinkedIn web searches
+2. **Clado** enriched the top 10 with full profile data (skills, experience, education, location)
+3. **Warm path finder** matched 4-7 external candidates to people in the 3,637-person network
+4. **Perplexity** deep-researched the top 5 candidates
+5. All 15 returned candidates have either a direct network connection or a warm intro path — **zero cold outreach needed**
+
+---
 
 ### Prediction Layer
 
@@ -354,9 +505,11 @@ app/
 │   ├── warm_path_finder.py # Warm path finding
 │   ├── company_db.py       # Company data access
 │   ├── external_search/    # Clado, PDL clients
-│   ├── research/           # Deep research (Perplexity)
-│   ├── reasoning/          # [NEW] Kimi K2.5 reasoning
-│   │   ├── kimi_engine.py
+│   ├── research/           # Deep research
+│   │   ├── research_agent_team.py  # Claude web_search 3-agent pipeline
+│   │   └── perplexity_researcher.py # Perplexity fallback (legacy)
+│   ├── reasoning/          # Claude reasoning engine
+│   │   ├── claude_engine.py    # Agent Swarm (skills/trajectory/fit/timing)
 │   │   ├── query_reasoner.py
 │   │   ├── candidate_analyzer.py
 │   │   └── agent_swarm.py
@@ -488,15 +641,14 @@ CLADO_API_KEY=xxx
 PDL_API_KEY=xxx
 PERPLEXITY_API_KEY=xxx
 
-# Reasoning (Kimi K2.5)
-KIMI_API_KEY=xxx
-KIMI_API_URL=https://api.moonshot.cn/v1
+# Reasoning + Research (Claude)
+ANTHROPIC_API_KEY=xxx
+ANTHROPIC_WEB_SEARCH_ENABLED=true  # Claude web_search for deep research
 
 # Feature Flags
 ENABLE_EXTERNAL_SEARCH=true
 ENABLE_TIMING_INTELLIGENCE=true
 ENABLE_DEEP_RESEARCH=true
-ENABLE_KIMI_REASONING=true
 ENABLE_RL_RANKING=false  # Enable after training
 ```
 
@@ -510,7 +662,7 @@ ENABLE_RL_RANKING=false  # Enable after training
 | Search latency (full unified) | <3s | ~5s |
 | Network index build | <200ms | ~300ms |
 | Candidates per search | 20 | 20 |
-| Deep research per search | 5 | 5 |
+| Deep research per search | 3 | 3 |
 | Warm path match rate | >30% | ~25% |
 
 ---
@@ -525,4 +677,4 @@ ENABLE_RL_RANKING=false  # Enable after training
 
 ---
 
-*Last updated: 2026-02-13*
+*Last updated: 2026-02-20*

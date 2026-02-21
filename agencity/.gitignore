@@ -56,3 +56,16 @@ coverage.xml
 exports/
 tmp/
 temp/
+
+# Embedded OpenClaw (cloned via scripts/setup-openclaw.sh)
+vendor/openclaw/
+
+# Agencity runtime
+.agencity-*.pid
+.openclaw-version
+
+# Debug artifacts
+browser_profiles/
+*.png
+connections_page_full.html
+.linkedin_test_cache.json

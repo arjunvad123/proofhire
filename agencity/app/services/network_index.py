@@ -21,6 +21,8 @@ class NetworkContact(BaseModel):
     linkedin_url: Optional[str] = None
     current_company: Optional[str] = None
     current_title: Optional[str] = None
+    # Experience data for temporal overlap checking
+    experience: list[dict] = []  # [{company, title, start_date, end_date}]
 
 
 class CompanyIndex(BaseModel):
@@ -99,12 +101,17 @@ class NetworkIndexService:
             else:
                 p = person if isinstance(person, dict) else {}
 
+            # Get enrichment for this person (need it early for contact creation)
+            person_id = str(p.get("id", ""))
+            enrichment = enrichments.get(person_id, {})
+
             contact = NetworkContact(
-                person_id=str(p.get("id", "")),
+                person_id=person_id,
                 full_name=p.get("full_name") or "Unknown",
                 linkedin_url=p.get("linkedin_url"),
                 current_company=p.get("current_company"),
-                current_title=p.get("current_title")
+                current_title=p.get("current_title"),
+                experience=enrichment.get("experience", [])
             )
 
             # Index by current company
@@ -121,9 +128,6 @@ class NetworkIndexService:
                 companies[normalized].contacts.append(contact)
                 companies[normalized].count += 1
 
-            # Get enrichment for this person
-            person_id = str(p.get("id", ""))
-            enrichment = enrichments.get(person_id, {})
 
             # Index by past companies (from experience)
             for exp in enrichment.get("experience", []):

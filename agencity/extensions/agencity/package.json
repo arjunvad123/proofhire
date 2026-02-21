@@ -1,0 +1,18 @@
+{
+  "name": "@agencity/openclaw-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw plugin that exposes Agencity hiring tools to the agent",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.3"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
