@@ -57,12 +57,12 @@ exports/
 tmp/
 temp/
 
-# Embedded OpenClaw (cloned via scripts/setup-openclaw.sh)
-vendor/openclaw/
+# OpenClaw internals (keep vendor/openclaw/ committed, but ignore its build artifacts)
+vendor/openclaw/node_modules/
+vendor/openclaw/.git/
 
 # Agencity runtime
 .agencity-*.pid
-.openclaw-version
 
 # Debug artifacts
 browser_profiles/
