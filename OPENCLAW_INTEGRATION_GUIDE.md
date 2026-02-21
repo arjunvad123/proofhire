@@ -1,8 +1,8 @@
 # OpenClaw + Agencity SaaS Implementation Guide
 
-**Version**: 4.0
+**Version**: 4.1
 **Date**: February 2026
-**Status**: Implementation Roadmap
+**Status**: Phase 1 Complete — Plugin loads cleanly (1 loaded, 0 errors)
 
 ---
 
@@ -108,10 +108,10 @@ OpenClaw provides capabilities that are hard to build from scratch:
 
 ```
 Phase 1: Local Development
-├── [ ] Install OpenClaw locally
-├── [ ] Verify gateway starts
-├── [ ] Run Agencity backend
-├── [ ] OpenClaw can call Agencity tools
+├── [x] Install OpenClaw locally (embedded at agencity/vendor/openclaw)
+├── [x] Verify gateway starts (port 18789, token auth)
+├── [x] Run Agencity backend (port 8001)
+├── [x] OpenClaw can call Agencity tools (plugin loads: 1 loaded, 0 errors)
 ├── [ ] Test context management
 └── [ ] Test semantic memory
 
@@ -147,6 +147,51 @@ Phase 5: Production
 ├── [ ] Incident response
 └── [ ] SOC2 compliance prep
 ```
+
+---
+
+## 2.5 Completed Work Log
+
+### Plugin Implementation (Feb 2026)
+
+The Agencity OpenClaw plugin lives at `agencity/extensions/agencity/` and is
+loaded via the config at `agencity/openclaw.config.json`.
+
+**Plugin structure**:
+```
+agencity/extensions/agencity/
+├── index.ts                  # Plugin entry — registers all tools
+├── package.json              # name: @agencity/agencity (matches plugin id)
+└── src/
+    ├── api-client.ts         # agencityGet / agencityPatch helpers
+    ├── search-tool.ts        # candidate_search → POST /api/search
+    ├── curation-tool.ts      # curate_candidates → POST /api/v1/curation/curate
+    ├── pipeline-tool.ts      # pipeline_status → GET/PATCH
+    └── network-intel-tool.ts # network_intel → warm-path lookup
+```
+
+**API path fixes applied** (plugin was previously 404-ing silently):
+
+| Tool | Old (broken) path | Correct path |
+|------|-------------------|--------------|
+| `curate_candidates` | `POST /api/curate` | `POST /api/v1/curation/curate` |
+| `pipeline_status` (view) | `GET /api/integration/pipeline?company_id=…` | `GET /api/pipeline/{company_id}` |
+| `pipeline_status` (update) | `POST /api/integration/pipeline/{id}/status` | `PATCH /api/candidates/{id}/status` |
+| `pipeline_status` & `network_intel` | missing `company_id` path param check | explicit error thrown before request |
+
+**Package name fix**: renamed from `@agencity/openclaw-plugin` → `@agencity/agencity`
+so the package `name` matches the plugin `id` field and OpenClaw's ID-hint
+matching works without warnings.
+
+**Result**: plugin loads cleanly — `1 loaded, 0 errors` — with:
+```bash
+OPENCLAW_CONFIG_PATH=agencity/openclaw.config.json openclaw gateway --port 18789
+```
+
+**Gateway integration test suite** added at:
+`agencity/vendor/openclaw/test/agencity-gateway.test.ts`
+
+Run with: `make test-gateway`
 
 ---
 
